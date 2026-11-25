@@ -118,7 +118,7 @@ def get_portal_selectors(
 ) -> PortalChannelSelectors:
     """Carrega mapa versionado. Seletores sintéticos só servem ao portal local de teste."""
     key = (channel or "").strip().upper()
-    if mock_portal and key in {"IFOOD", "99FOOD"}:
+    if mock_portal and key in {"IFOOD", "99FOOD", "ANOTA_AI"}:
         return PortalChannelSelectors(
             channel=key, validated_real_portal=False, notes="Portal local de teste.",
             **{name: getattr(MOCK_HERMES_SELECTORS, name)

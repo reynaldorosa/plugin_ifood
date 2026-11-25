@@ -12,6 +12,8 @@ _DEFAULT_PORTAL_DOMAINS: tuple[str, ...] = (
     "portal.ifood.com.br",
     "gestor.ifood.com.br",
     "merchant.99app.com",
+    "admin.anota.ai",
+    "app.anota.ai",
 )
 _WRITE_CAPABILITIES = frozenset(
     {

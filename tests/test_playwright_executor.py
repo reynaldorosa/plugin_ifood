@@ -635,6 +635,33 @@ def test_external_selectors_require_version_and_homologation(tmp_path: Path) -> 
         get_portal_selectors("99FOOD", str(path))
 
 
+def test_anota_ai_mock_uses_own_channel_and_store_capability(tmp_path: Path, mock_portal: str) -> None:
+    cfg = replace(
+        _make_playwright_config(tmp_path), default_sync_mode="AUTO_APPLY",
+        write_capabilities=frozenset({"catalog_availability"}),
+        tenants={"padaria-a": TenantConfig("padaria-a", stores={
+            "padaria-centro": {"merchant_id": MERCHANT_1, "channel": "ANOTA_AI",
+                               "write_capabilities": ["catalog_availability"]},
+        })},
+    )
+    assert validate_portal_url("https://admin.anota.ai/loja", Config(True, frozenset(), "", "https://merchant-api.ifood.com.br", "")) == "https://admin.anota.ai/loja"
+    assert validate_portal_url("https://app.anota.ai/loja", Config(True, frozenset(), "", "https://merchant-api.ifood.com.br", "")) == "https://app.anota.ai/loja"
+    snapshot = parse_sheet_snapshot(
+        stores_rows=[{"store_key": "padaria-centro", "channel": "ANOTA_AI",
+                      "merchant_id": MERCHANT_1, "store_name": "Padaria Centro",
+                      "execution_mode": "PLAYWRIGHT_ONLY", "portal_url": f"{mock_portal}/portal"}],
+        catalog_rows=[{"store_key": "padaria-centro", "item_id": "item-1",
+                       "item_name": "Pão de Queijo", "price_brl": "29,90", "available": False}],
+        tenant_key="padaria-a", default_sync_mode="AUTO_APPLY",
+    )
+    result = SyncEngine(cfg).process_snapshot(
+        snapshot=snapshot, trigger_source="SHEETS_POLLER", actor_id="poller",
+        tenant_key="padaria-a", write_back=False,
+    )
+    assert result["results"][0]["outcome"] == "CONFIRMED"
+    assert _MockPortalHandler.state["available"] is False
+
+
 def test_browser_profile_isolated_by_tenant_store_and_channel(tmp_path: Path) -> None:
     cfg = replace(_make_playwright_config(tmp_path),
                   playwright_user_data_dir=str(tmp_path / "profiles"))
@@ -642,9 +669,14 @@ def test_browser_profile_isolated_by_tenant_store_and_channel(tmp_path: Path) ->
     first = SheetStoreConfig(tenant_key="padaria-a", store_key="store",
                              channel=StoreChannel.IFOOD)
     other_channel = first.model_copy(update={"channel": StoreChannel.FOOD99})
+    anota_channel = first.model_copy(update={"channel": StoreChannel.ANOTA_AI})
     other_tenant = first.model_copy(update={"tenant_key": "padaria-b"})
-    assert len({executor._profile_dir(first), executor._profile_dir(other_channel),
-                executor._profile_dir(other_tenant)}) == 3
+    assert len({
+        executor._profile_dir(first),
+        executor._profile_dir(other_channel),
+        executor._profile_dir(anota_channel),
+        executor._profile_dir(other_tenant),
+    }) == 4
 
 
 def test_playwright_write_divergent_marks_uncertain_and_locks_further_attempts(

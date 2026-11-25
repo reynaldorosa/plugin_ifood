@@ -173,7 +173,7 @@ class SyncEngine:
         if store.execution_mode == ExecutionMode.DISABLED:
             return BackendUsed.NONE, "Execução desativada para este canal."
         if store.channel != StoreChannel.IFOOD:
-            if (store.channel == StoreChannel.FOOD99
+            if (store.channel in {StoreChannel.FOOD99, StoreChannel.ANOTA_AI}
                     and store.execution_mode in {ExecutionMode.PLAYWRIGHT_ONLY, ExecutionMode.API_FIRST}
                     and store.portal_url
                     and domain.value in self.config.validated_portal_domains):
@@ -1232,7 +1232,10 @@ class SyncEngine:
                 verified_caps = self.config.verified_store_capabilities(
                     resolved_tenant, store_key, store.channel.value, store.merchant_id,
                 )
-                if (store.sync_mode == SyncMode.AUTO_APPLY or store.channel == StoreChannel.FOOD99) and (
+                if (
+                    store.sync_mode == SyncMode.AUTO_APPLY
+                    or store.channel in {StoreChannel.FOOD99, StoreChannel.ANOTA_AI}
+                ) and (
                     not required_caps or not required_caps.issubset(verified_caps)
                 ):
                     warnings.append("Capacidade da loja/canal não verificada para esta escrita.")
@@ -1427,7 +1430,9 @@ class SyncEngine:
         if not actor_id or (not auto_authorized and actor_id not in self.config.operator_ids):
             raise PermissionError("Aprovação exige identidade de operador autorizada.")
         if prop["merchant_id"] == "" or prop["channel"] not in {
-            StoreChannel.IFOOD.value, StoreChannel.FOOD99.value,
+            StoreChannel.IFOOD.value,
+            StoreChannel.FOOD99.value,
+            StoreChannel.ANOTA_AI.value,
         }:
             raise PermissionError("Canal ou identidade da loja sem capacidade de escrita validada.")
         if canonical_digest(prop["proposed"]) != prop["proposed_hash"]:
@@ -1448,7 +1453,10 @@ class SyncEngine:
         )
         if reason:
             raise PermissionError(reason)
-        if auto_authorized or prop["channel"] == StoreChannel.FOOD99.value:
+        if auto_authorized or prop["channel"] in {
+            StoreChannel.FOOD99.value,
+            StoreChannel.ANOTA_AI.value,
+        }:
             required = self._required_capabilities(
                 ChangeDomain(prop["domain"]), prop["current"], prop["proposed"],
             )

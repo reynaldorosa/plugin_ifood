@@ -18,7 +18,9 @@ def approved_execution(
     domain: ChangeDomain, payload: Any, actor_id: str,
 ) -> Iterator[None]:
     if not execution_id or not actor_id or channel not in {
-        StoreChannel.IFOOD.value, StoreChannel.FOOD99.value,
+        StoreChannel.IFOOD.value,
+        StoreChannel.FOOD99.value,
+        StoreChannel.ANOTA_AI.value,
     }:
         raise PermissionError("Contexto de aprovação incompleto para escrita.")
     token = _active_permit.set({

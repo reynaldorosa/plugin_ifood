@@ -230,7 +230,7 @@ class PlaywrightStoreExecutor:
           - reason: motivo explícito quando observed=False
           - session_status: 'OK' | 'LOGIN_REQUIRED' | 'EXPIRED' | 'NÃO CONFIGURADO'
         """
-        if store.channel.value not in {"IFOOD", "99FOOD"}:
+        if store.channel.value not in {"IFOOD", "99FOOD", "ANOTA_AI"}:
             return {
                 "state": None,
                 "observed": False,
@@ -633,7 +633,7 @@ class PlaywrightStoreExecutor:
         domain: ChangeDomain,
         proposed_payload: Any,
     ) -> dict[str, Any]:
-        if store.channel.value not in {"IFOOD", "99FOOD"}:
+        if store.channel.value not in {"IFOOD", "99FOOD", "ANOTA_AI"}:
             return {
                 "outcome": SyncOutcome.UNSUPPORTED.value,
                 "message": f"Canal {store.channel.value} não possui adaptador Playwright homologado.",
