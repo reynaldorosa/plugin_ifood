@@ -205,6 +205,8 @@ class Config:
     telegram_chat_id: str = ""
     portal_selectors_file: str = ""
     max_auto_writes_per_minute: int = 10
+    anota_ai_api_token: str = ""
+    anota_ai_api_base: str = "https://api-parceiros.anota.ai"
 
     def __post_init__(self) -> None:
         if not self.tenants:
@@ -344,4 +346,8 @@ class Config:
             telegram_chat_id=os.getenv("IFOOD_LOJA_TELEGRAM_CHAT_ID", "").strip(),
             portal_selectors_file=os.getenv("IFOOD_LOJA_PORTAL_SELECTORS_FILE", "").strip(),
             max_auto_writes_per_minute=auto_limit,
+            anota_ai_api_token=os.getenv("IFOOD_LOJA_ANOTA_AI_TOKEN", "").strip(),
+            anota_ai_api_base=os.getenv(
+                "IFOOD_LOJA_ANOTA_AI_API_BASE", "https://api-parceiros.anota.ai"
+            ).strip().rstrip("/"),
         )

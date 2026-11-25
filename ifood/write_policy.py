@@ -55,6 +55,29 @@ def require_approved_write(
         raise PermissionError("A capacidade de escrita não corresponde à proposta aprovada.")
     if payload is not None:
         approved = permit["payload"]
+        if capability in {"catalog_price", "catalog_availability"} and isinstance(payload, dict) and isinstance(approved, list):
+            target_id = str(payload.get("item_id") or "")
+            approved_item = next(
+                (row for row in approved if isinstance(row, dict) and str(row.get("item_id") or "") == target_id),
+                None,
+            )
+            if approved_item is None:
+                raise PermissionError("Item de catálogo não consta na proposta aprovada.")
+            if capability == "catalog_price":
+                if (
+                    payload.get("price_cents") != approved_item.get("price_cents")
+                    and approved_item.get("price_cents") is not None
+                ):
+                    raise PermissionError("Os valores de escrita diferem dos valores aprovados.")
+                if (
+                    payload.get("original_price_cents") is not None
+                    and payload.get("original_price_cents") != approved_item.get("original_price_cents")
+                ):
+                    raise PermissionError("Os valores de escrita diferem dos valores aprovados.")
+            elif capability == "catalog_availability":
+                if payload.get("available") != approved_item.get("available"):
+                    raise PermissionError("Os valores de escrita diferem dos valores aprovados.")
+            return
         if capability == "store_pause":
             approved = {
                 "status_action": "PAUSE",

@@ -18,6 +18,11 @@ PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
 
+from ifood.anota_ai import (
+    AnotaAiReadOnlyClient,
+    anota_ai_items_to_sheet_rows,
+    is_anota_ai_configured,
+)
 from ifood.client import IfoodClient, has_ifood_api_credentials
 from ifood.config import Config
 from ifood.operations import prepare
@@ -363,6 +368,7 @@ async def sync_overview(
                 ),
                 "sheets_poller_runtime": get_poller_runtime_state(),
                 "ifood_api_configured": has_ifood_api_credentials(cfg),
+                "anota_ai_configured": is_anota_ai_configured(cfg),
                 "playwright_configured": bool(
                     cfg.playwright_cdp_url or cfg.playwright_user_data_dir
                 ),
@@ -485,4 +491,32 @@ async def get_apps_script(cfg: Config = Depends(operator)):
         "filename": "Code.gs",
         "content": gs_path.read_text(encoding="utf-8") if gs_path.exists() else "",
     }
+
+
+@router.get("/anota-ai/export")
+async def export_anota_ai_menu(
+    store_key: str = "loja-anota-ai",
+    cfg: Config = Depends(operator),
+):
+    """Importação somente-leitura do cardápio Anota AI (`simple-item/export`)."""
+    def _fetch() -> dict[str, Any]:
+        items = AnotaAiReadOnlyClient(cfg).export_simple_items()
+        rows = anota_ai_items_to_sheet_rows(store_key, items)
+        return {
+            "channel": "ANOTA_AI",
+            "read_only": True,
+            "store_key": store_key.strip(),
+            "total_items": len(items),
+            "items": items,
+            "cardapio_rows": rows,
+        }
+
+    try:
+        return await asyncio.to_thread(_fetch)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            502, f"Falha ao importar cardápio somente-leitura da Anota AI ({type(exc).__name__})."
+        ) from exc
 

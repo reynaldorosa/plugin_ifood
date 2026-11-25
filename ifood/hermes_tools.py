@@ -5,6 +5,11 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from ifood.anota_ai import (
+    AnotaAiReadOnlyClient,
+    anota_ai_items_to_sheet_rows,
+    is_anota_ai_configured,
+)
 from ifood.client import has_ifood_api_credentials
 from ifood.config import Config
 from ifood.sheets_client import GoogleSheetsClient, is_sheets_api_configured
@@ -51,6 +56,7 @@ def tool_sync_status(tenant_key: str = "default") -> str:
             "sheets_api_configured": is_sheets_api_configured(cfg),
             "webhook_configured": bool(cfg.sheets_webhook_secret),
             "ifood_api_configured": has_ifood_api_credentials(cfg),
+            "anota_ai_configured": is_anota_ai_configured(cfg),
             "playwright_configured": bool(cfg.playwright_cdp_url or cfg.playwright_user_data_dir),
             "portal_sessions": portal_sessions,
             "pending_proposals": len(pending),
@@ -164,6 +170,29 @@ def tool_reject_proposal(
         return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
 
 
+def tool_import_anota_ai_menu(store_key: str = "loja-anota-ai") -> str:
+    cfg, auth_or_err = _authorize_agent()
+    if cfg is None:
+        return json.dumps(auth_or_err, ensure_ascii=False)
+    try:
+        items = AnotaAiReadOnlyClient(cfg).export_simple_items()
+        rows = anota_ai_items_to_sheet_rows(store_key, items)
+        return json.dumps(
+            {
+                "ok": True,
+                "channel": "ANOTA_AI",
+                "read_only": True,
+                "store_key": store_key.strip(),
+                "total_items": len(items),
+                "items": items,
+                "cardapio_rows": rows,
+            },
+            ensure_ascii=False,
+        )
+    except Exception as exc:
+        return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
+
+
 TOOL_SPECS: list[dict[str, Any]] = [
     {
         "name": "ifood_sync_status",
@@ -236,5 +265,20 @@ TOOL_SPECS: list[dict[str, Any]] = [
             },
         },
         "handler": tool_reject_proposal,
+    },
+    {
+        "name": "ifood_import_anota_ai_menu",
+        "schema": {
+            "name": "ifood_import_anota_ai_menu",
+            "description": "Importa somente-leitura o cardápio da Anota AI (simple-item/export) pronto para a aba Cardapio da planilha.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "store_key": {"type": "string"},
+                },
+                "required": [],
+            },
+        },
+        "handler": tool_import_anota_ai_menu,
     },
 ]

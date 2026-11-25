@@ -9,6 +9,8 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
+import httpx
+
 from ifood.client import IfoodClient, has_ifood_api_credentials
 from ifood.config import Config
 from ifood.models import (
@@ -115,6 +117,14 @@ def _utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _is_api_auth_error(exc: Exception) -> bool:
+    if isinstance(exc, PermissionError):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+        return exc.response.status_code in {401, 403}
+    return False
+
+
 class SyncEngine:
     """Orquestra diff determinístico, guardrails, propostas, execução API/Playwright e auditoria."""
 
@@ -193,8 +203,12 @@ class SyncEngine:
             blocked_reason = blocked_reason or (
                 "Capacidade de escrita não habilitada após validação do contrato e do merchant."
             )
-        if api_observable and domain == ChangeDomain.CATALOG:
-            blocked_reason = "Escritas de catálogo via API aguardam batches assíncronos e contexto de catálogo."
+        if api_observable and domain == ChangeDomain.CATALOG and not (
+            {"catalog_price", "catalog_availability"} & capability_set
+        ):
+            blocked_reason = blocked_reason or (
+                "Capacidade de escrita não habilitada após validação do contrato e do merchant."
+            )
         portal_ready = bool(store.portal_url) and domain.value in self.config.validated_portal_domains
 
         if store.execution_mode == ExecutionMode.API_ONLY:
@@ -382,7 +396,13 @@ class SyncEngine:
                     "active_interruptions": len(interruptions),
                     "interruptions": normalized_interruptions,
                 }, True
-        except Exception:
+        except Exception as exc:
+            if _is_api_auth_error(exc):
+                self._last_observation_detail = {
+                    "outcome": "API_AUTH_ERROR",
+                    "reason": str(exc) or type(exc).__name__,
+                    "api_auth_error": True,
+                }
             return fallback, False
 
         return fallback, False
@@ -555,9 +575,11 @@ class SyncEngine:
 
         client = self._make_api_client()
         merchant_id = store.merchant_id
+        any_write_succeeded = False
         try:
             if domain == ChangeDomain.OPENING_HOURS:
                 client.put_opening_hours(proposed_payload, merchant_id=merchant_id)
+                any_write_succeeded = True
                 observed_raw = client.opening_hours(merchant_id=merchant_id)
                 observed = normalize_shifts(
                     [s for g in observed_raw for s in g.get("shifts", [])]
@@ -584,6 +606,10 @@ class SyncEngine:
                     desired_payload=proposed_payload, last_snapshot=None,
                 )
                 if not live:
+                    if self._last_observation_detail.get("api_auth_error"):
+                        raise PermissionError(
+                            str(self._last_observation_detail.get("reason") or "Autorização iFood API recusada.")
+                        )
                     return {
                         "outcome": SyncOutcome.BLOCKED_GUARDRAIL.value,
                         "message": "Não foi possível ler o catálogo antes de validar os campos solicitados.",
@@ -608,10 +634,19 @@ class SyncEngine:
                             }
                 for item in proposed_payload:
                     iid = str(item["item_id"])
+                    live_item = current_by_id.get(iid, {})
                     price_cents_req = item.get("price_cents")
                     orig = item.get("original_price_cents")
-                    if price_cents_req is not None or orig is not None:
-                        fallback_cents = int(current_by_id[iid].get("price_cents") or 0)
+                    price_changed = (
+                        price_cents_req is not None
+                        and price_cents_req != live_item.get("price_cents")
+                    )
+                    orig_changed = (
+                        orig is not None
+                        and orig != live_item.get("original_price_cents")
+                    )
+                    if price_changed or orig_changed:
+                        fallback_cents = int(live_item.get("price_cents") or 0)
                         effective_cents = (
                             int(price_cents_req) if price_cents_req is not None else fallback_cents
                         )
@@ -621,12 +656,15 @@ class SyncEngine:
                             original_price_brl=(int(orig) / 100.0) if orig is not None else None,
                             merchant_id=merchant_id,
                         )
-                    if item.get("available") is not None:
+                        any_write_succeeded = True
+                    avail_req = item.get("available")
+                    if avail_req is not None and avail_req != live_item.get("available"):
                         client.patch_item_status(
                             item_id=iid,
-                            available=bool(item["available"]),
+                            available=bool(avail_req),
                             merchant_id=merchant_id,
                         )
+                        any_write_succeeded = True
                 observed, live = self._observe_current(
                     store=store, domain=domain, backend=backend,
                     desired_payload=proposed_payload, last_snapshot=None,
@@ -654,6 +692,7 @@ class SyncEngine:
                         end_iso=proposed_payload["pause_end_iso"],
                         merchant_id=merchant_id,
                     )
+                    any_write_succeeded = True
                     interruptions = client.list_interruptions(merchant_id=merchant_id)
                     expected_reason = proposed_payload.get("pause_reason") or "Pausa via Sheets"
                     created_id = created.get("id") if isinstance(created, dict) else None
@@ -688,6 +727,7 @@ class SyncEngine:
                         intr_id = intr.get("id")
                         if intr_id:
                             client.delete_interruption(str(intr_id), merchant_id=merchant_id)
+                            any_write_succeeded = True
                     remaining = client.list_interruptions(merchant_id=merchant_id)
                     ok = len(remaining) == 0
                     return {
@@ -701,6 +741,24 @@ class SyncEngine:
                         },
                     }
         except Exception as exc:
+            can_fallback_playwright = (
+                not any_write_succeeded
+                and _is_api_auth_error(exc)
+                and store.channel == StoreChannel.IFOOD
+                and store.execution_mode == ExecutionMode.API_FIRST
+                and bool(store.portal_url)
+                and domain.value in self.config.validated_portal_domains
+            )
+            if can_fallback_playwright:
+                fb = self._execute_write(
+                    store=store,
+                    domain=domain,
+                    backend=BackendUsed.PLAYWRIGHT,
+                    proposed_payload=proposed_payload,
+                )
+                fb["fallback_backend"] = BackendUsed.PLAYWRIGHT.value
+                fb["api_fallback_reason"] = str(exc) or type(exc).__name__
+                return fb
             return {
                 "outcome": SyncOutcome.UNCERTAIN.value,
                 "message": f"Resultado da escrita não confirmado ({type(exc).__name__}); reconciliação obrigatória.",
@@ -1022,6 +1080,29 @@ class SyncEngine:
                     desired_payload=proposed_payload,
                     last_snapshot=last_snap,
                 )
+                api_fallback_reason: str | None = None
+                if (
+                    backend == BackendUsed.IFOOD_API
+                    and not live_observed
+                    and (self._last_observation_detail or {}).get("api_auth_error")
+                    and store.channel == StoreChannel.IFOOD
+                    and store.execution_mode == ExecutionMode.API_FIRST
+                    and bool(store.portal_url)
+                    and domain.value in self.config.validated_portal_domains
+                ):
+                    api_fallback_reason = str(
+                        self._last_observation_detail.get("reason")
+                        or "Falha de autorização na API iFood"
+                    )
+                    backend = BackendUsed.PLAYWRIGHT
+                    backend_reason = None
+                    current_state, live_observed = self._observe_current(
+                        store=store,
+                        domain=domain,
+                        backend=backend,
+                        desired_payload=proposed_payload,
+                        last_snapshot=last_snap,
+                    )
                 current_hash = (
                     canonical_digest(current_state)
                     if current_state is not None
@@ -1140,6 +1221,14 @@ class SyncEngine:
                 if backend_reason:
                     warnings.append(backend_reason)
                 required_caps = self._required_capabilities(domain, current_state, proposed_payload)
+                if domain == ChangeDomain.CATALOG and required_caps and not required_caps.issubset(
+                    self.config.write_capabilities
+                ):
+                    cap_msg = (
+                        "Capacidade de escrita não habilitada após validação do contrato e do merchant."
+                    )
+                    if cap_msg not in warnings:
+                        warnings.append(cap_msg)
                 verified_caps = self.config.verified_store_capabilities(
                     resolved_tenant, store_key, store.channel.value, store.merchant_id,
                 )
@@ -1201,6 +1290,7 @@ class SyncEngine:
                             "source_id": snapshot.source_id,
                             "policy": store.sync_mode.value,
                             "approval_required": bool(warnings) or store.sync_mode != SyncMode.AUTO_APPLY,
+                            "api_fallback_reason": api_fallback_reason,
                         },
                         audit_event={
                             "actor_id": actor_id, "store_key": store_key,
@@ -1367,8 +1457,22 @@ class SyncEngine:
             )
             if not required or not required.issubset(verified):
                 raise PermissionError("Capacidade da loja/canal não verificada para esta escrita.")
-        if allowed_backend.value != prop["backend_planned"]:
+        if allowed_backend.value != prop["backend_planned"] and not (
+            prop["metadata"].get("api_fallback_reason")
+            and prop["backend_planned"] == BackendUsed.PLAYWRIGHT.value
+            and store_cfg.execution_mode == ExecutionMode.API_FIRST
+            and bool(store_cfg.portal_url)
+            and prop["domain"] in self.config.validated_portal_domains
+        ):
             raise PermissionError(reason or "Capacidade de escrita não está habilitada.")
+        if ChangeDomain(prop["domain"]) == ChangeDomain.CATALOG:
+            req_caps = self._required_capabilities(
+                ChangeDomain.CATALOG, prop["current"], prop["proposed"],
+            )
+            if req_caps and not req_caps.issubset(self.config.write_capabilities):
+                raise PermissionError(
+                    "Capacidade de escrita não habilitada após validação do contrato e do merchant."
+                )
         if prop["guardrail_warnings"] and not override_guardrail:
             raise PermissionError(
                 "Proposta possui alertas de guardrail; confirme com override_guardrail=True."
@@ -1457,6 +1561,11 @@ class SyncEngine:
                 store.store_key, domain.value, lock_owner, tenant_key=resolved_tenant
             )
         outcome_str = exec_res["outcome"]
+        effective_backend = (
+            BackendUsed.PLAYWRIGHT
+            if exec_res.get("fallback_backend") == BackendUsed.PLAYWRIGHT.value
+            else backend
+        )
         next_status = "APPLIED" if outcome_str == SyncOutcome.CONFIRMED.value else "DIVERGENT"
         if outcome_str in {
             SyncOutcome.LOGIN_REQUIRED.value,
@@ -1478,7 +1587,7 @@ class SyncEngine:
                 "domain": domain.value, "trigger_source": (
                     "AUTO_APPLY" if auto_authorized else "MANUAL_CONFIRM"
                 ),
-                "backend_used": backend.value, "outcome": outcome_str,
+                "backend_used": effective_backend.value, "outcome": outcome_str,
                 "summary": exec_res["message"],
                 "details": {"proposal_id": proposal_id, "approver_id": actor_id,
                             "override_guardrail": override_guardrail,
@@ -1501,7 +1610,7 @@ class SyncEngine:
                 tenant_key=resolved_tenant,
                 store_key=store.store_key, domain=domain.value,
                 last_applied_hash=prop["proposed_hash"], last_state=proposed_payload,
-                last_backend=backend.value, last_outcome=outcome_str,
+                last_backend=effective_backend.value, last_outcome=outcome_str,
             )
         wb_warning = None
         if write_back:
@@ -1511,7 +1620,7 @@ class SyncEngine:
                         "tenant_key": resolved_tenant,
                         "store_key": store.store_key,
                         "domain": domain.value,
-                        "backend_used": backend.value,
+                        "backend_used": effective_backend.value,
                         "outcome": outcome_str,
                         "message": exec_res["message"],
                         "proposal_id": proposal_id,

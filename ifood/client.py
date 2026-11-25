@@ -229,7 +229,34 @@ class IfoodClient:
         original_price_brl: float | None = None,
         merchant_id: str | None = None,
     ) -> Any:
-        raise PermissionError("Escritas de catálogo permanecem bloqueadas até suporte a batch e contexto de catálogo.")
+        clean_item_id = (item_id or "").strip()
+        if not clean_item_id:
+            raise ValueError("item_id obrigatório para atualização de preço.")
+        if price_brl < 0:
+            raise ValueError("Preço do item não pode ser negativo.")
+        if original_price_brl is not None and original_price_brl < 0:
+            raise ValueError("Preço original do item não pode ser negativo.")
+        target_id = self._resolve_merchant_id(merchant_id)
+        price_cents = round(float(price_brl) * 100)
+        orig_cents = round(float(original_price_brl) * 100) if original_price_brl is not None else None
+        self._require_write_capability(
+            "catalog_price",
+            target_id,
+            {
+                "item_id": clean_item_id,
+                "price_cents": price_cents,
+                "original_price_cents": orig_cents,
+            },
+        )
+        self.authorized_merchant(target_id)
+        price_obj: dict[str, Any] = {"value": round(float(price_brl), 2)}
+        if original_price_brl is not None:
+            price_obj["originalValue"] = round(float(original_price_brl), 2)
+        return self._request(
+            "PATCH",
+            f"/catalog/v2.0/merchants/{target_id}/items/price",
+            {"itemId": clean_item_id, "price": price_obj},
+        )
 
     def patch_item_status(
         self,
@@ -238,5 +265,22 @@ class IfoodClient:
         available: bool,
         merchant_id: str | None = None,
     ) -> Any:
-        raise PermissionError("Escritas de catálogo permanecem bloqueadas até suporte a batch e contexto de catálogo.")
+        clean_item_id = (item_id or "").strip()
+        if not clean_item_id:
+            raise ValueError("item_id obrigatório para atualização de disponibilidade.")
+        target_id = self._resolve_merchant_id(merchant_id)
+        self._require_write_capability(
+            "catalog_availability",
+            target_id,
+            {"item_id": clean_item_id, "available": bool(available)},
+        )
+        self.authorized_merchant(target_id)
+        return self._request(
+            "PATCH",
+            f"/catalog/v2.0/merchants/{target_id}/items/status",
+            {
+                "itemId": clean_item_id,
+                "status": "AVAILABLE" if available else "UNAVAILABLE",
+            },
+        )
 

@@ -41,6 +41,7 @@ def test_plugin_root_register_exposes_sync_tools() -> None:
         "ifood_list_proposals",
         "ifood_confirm_proposal",
         "ifood_reject_proposal",
+        "ifood_import_anota_ai_menu",
     }
     assert all(t["toolset"] == "ifood_loja" for t in ctx.tools)
 
