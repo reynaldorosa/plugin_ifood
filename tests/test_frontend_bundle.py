@@ -209,7 +209,7 @@ def test_dashboard_bundle_renders_desktop_and_mobile_without_errors() -> None:
     with playwright_sync.sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         try:
-            for width, height in ((1280, 800), (390, 844)):
+            for width, height in ((1440, 900), (1280, 800), (375, 812), (390, 844)):
                 page = browser.new_page(viewport={"width": width, "height": height})
                 errors: list[str] = []
                 page.on("pageerror", lambda err, errs=errors: errs.append(str(err)))
@@ -221,15 +221,42 @@ def test_dashboard_bundle_renders_desktop_and_mobile_without_errors() -> None:
                 )
                 page.set_content(harness_html, wait_until="load")
                 page.wait_for_timeout(300)
-                assert page.locator("text=loja-99 · OPENING_HOURS").count() > 0, (
-                    page.locator("body").inner_text(), errors
-                )
                 body_text = page.locator("body").inner_text()
-                assert "Central de sincroniza" in body_text
-                assert "Para revisar" in body_text
-                assert "Sincronizar Planilha Agora" in body_text
-                assert "Confirmar e Aplicar" in body_text
+                assert "Loja iFood / Sheets" in body_text, (body_text, errors)
+                assert "A planilha é o comando" in body_text
+                assert "prontidão das integrações" in body_text.lower()
+                assert "política de escrita" in body_text.lower()
+                assert "sessões dos portais" in body_text.lower()
+                assert "último lote" in body_text.lower()
+                assert "Confirmar e Aplicar" not in body_text
                 assert page.evaluate("window.__LAST_FETCH_OPTIONS__?.allowUnauthorized === true")
+
+                overflow_overview = page.evaluate(
+                    "document.documentElement.scrollWidth > document.documentElement.clientWidth + 2"
+                )
+                assert not overflow_overview, f"Overflow horizontal na Visão geral em {width}x{height}"
+
+                # Navega para a aba Fila de mudanças e verifica o modelo novo (sem Confirmar/Aplicar)
+                page.locator("button", has_text="Fila de mudanças (1)").click()
+                page.wait_for_timeout(150)
+                changes_text = page.locator("body").inner_text()
+                assert "Horários · loja-99" in changes_text, (changes_text, errors)
+                assert "seg 09:00:00+540min" in changes_text
+                assert "Descartar" in changes_text
+                assert "Confirmar e Aplicar" not in changes_text
+
+                # Navega para a aba Auditoria
+                page.locator("button", has_text="Auditoria").click()
+                page.wait_for_timeout(150)
+                audit_text = page.locator("body").inner_text()
+                assert "Proposta criada via planilha." in audit_text, (audit_text, errors)
+
+                # Navega para a aba Planilha e verifica o botão de sincronização
+                page.locator("button", has_text="Planilha").click()
+                page.wait_for_timeout(150)
+                sheet_text = page.locator("body").inner_text()
+                assert "Sincronizar agora" in sheet_text, (sheet_text, errors)
+
                 overflow = page.evaluate(
                     "document.documentElement.scrollWidth > document.documentElement.clientWidth + 2"
                 )
