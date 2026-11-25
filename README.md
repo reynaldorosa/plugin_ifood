@@ -82,12 +82,14 @@ IFOOD_LOJA_ALLOWED_PORTAL_DOMAINS   # allowlist; padrão definido em ifood/confi
 
 O plugin não herda automaticamente cookies da janela normal do Chrome. A autenticação inicial precisa ocorrer manualmente no perfil dedicado ou na sessão CDP que será reutilizada. Se o portal redirecionar para login, o código retorna `LOGIN_REQUIRED`; o fluxo atual não mantém uma tela interativa de login dentro do plugin.
 
+Em modo `API_FIRST`, falhas de autorização 401/403 na API podem usar Playwright quando o portal e o domínio estiverem validados. O executor também aceita `ANOTA_AI`, com perfil isolado por padaria, loja e canal.
+
 ## Política de escrita e capacidades bloqueadas
 
 - `REVIEW` continua sendo o padrão. `IFOOD_LOJA_DEFAULT_SYNC_MODE=AUTO_APPLY` permite aplicação direta somente quando a loja/canal/capacidade também constam no mapa de tenants; a planilha pode reduzir uma loja para `REVIEW`.
 - `IFOOD_LOJA_VERIFIED_WRITE_CAPABILITIES` limita as capacidades globais. Cada loja precisa declarar `channel`, `merchant_id` e `write_capabilities` em `IFOOD_LOJA_TENANTS_JSON`/`FILE` para aplicação automática e para escrita 99Food. O valor da planilha não pode ampliar essa permissão.
-- Escritas de catálogo continuam bloqueadas no motor: a API atual usa batches assíncronos e pode variar por contexto de catálogo. O código não acompanha o batch nem prova o read-back de cada contexto.
-- Playwright só é selecionado para domínios em `IFOOD_LOJA_VALIDATED_PORTAL_DOMAINS`. iFood e 99Food usam seletor próprio por canal via `IFOOD_LOJA_PORTAL_SELECTORS_FILE`; sem mapa real com `validated_real_portal=true`, a leitura/escrita é bloqueada. Seletores `data-hermes-*` só são usados nos testes HTTP locais.
+- O Catalog v2 implementa PATCH de preço e disponibilidade com releitura; requer capacidades habilitadas e validação da conta e do contrato.
+- Playwright só é selecionado para domínios em `IFOOD_LOJA_VALIDATED_PORTAL_DOMAINS`. iFood, 99Food e Anota AI usam seletor próprio por canal via `IFOOD_LOJA_PORTAL_SELECTORS_FILE`; sem mapa real com `validated_real_portal=true`, a leitura/escrita é bloqueada. Seletores `data-hermes-*` só são usados nos testes HTTP locais.
 - `OPEN` e substituição da grade completa exigem confirmação reforçada. Toda proposta exige leitura ao vivo; falha de leitura bloqueia.
 - O poller segue opt-in (`IFOOD_LOJA_SHEETS_POLL_SECONDS=0`) e o painel mostra seu estado no runtime do plugin, quando observado.
 - Em configuração multi-padaria, o poller percorre cada `sheet_id` configurado. As rotas HTTP exigem `tenant_key` quando há mais de uma padaria; o webhook o deriva do `spreadsheet_id` assinado.
@@ -102,11 +104,12 @@ Documentação oficial consultada para o contrato geral: [Merchant best practice
 | Horários | `GET /merchant/v1.0/merchants/{merchantId}/opening-hours` | `PUT` da grade integral | Exige sete dias, leitura antes/depois e `opening_hours`; allowlist vazia por padrão. |
 | Pausa | `GET /merchant/v1.0/merchants/{merchantId}/interruptions` | `POST .../interruptions` | Só permite pausa sem interrupção existente, com read-back da própria pausa; exige `store_pause`. |
 | Reabertura | Requer leitura de status e interrupções; a leitura atual não comprova o estado completo | `DELETE .../interruptions/{id}` | Bloqueada até confirmar estado `reopenable` e read-back do status para a conta piloto. |
-| Catálogo | `GET /catalog/v2.0/merchants/{merchantId}/catalogs` e categorias | `PATCH .../items/price` e `PATCH .../items/status` | Escrita bloqueada: o código ainda não acompanha batches assíncronos nem aprova contexto por catálogo. |
+| Catálogo | `GET /catalog/v2.0/merchants/{merchantId}/catalogs` e categorias | `PATCH .../items/price` e `PATCH .../items/status` | Implementado com read-back; depende de capacidade e permissões validadas para a conta. |
 | 99Food | Playwright com mapa de seletores por canal | Playwright com read-back | Caminho testado apenas no portal local simulado; sem seletores reais homologados retorna `UNSUPPORTED`. |
+| Anota AI | Exportação somente-leitura `simple-item/export`; Playwright | Playwright com read-back | API de exportação não escreve; portal exige seletores e domínio validados. |
 | Tempo de preparo | Sem GET/PUT API implementado | Nenhuma API | Playwright sem leitura atual validada; fica bloqueado. |
 
-`IFOOD_LOJA_VERIFIED_WRITE_CAPABILITIES` não comprova sozinho permissões. O dono deve liberar uma capacidade somente depois de confirmar o contrato oficial, o módulo e os escopos da conta própria de homologação. Escrita via API de catálogo, fallback automático API→Playwright e portais reais ainda não estão validados.
+`IFOOD_LOJA_VERIFIED_WRITE_CAPABILITIES` não comprova sozinho permissões. O dono deve liberar uma capacidade somente depois de confirmar o contrato oficial, o módulo e os escopos da conta própria de homologação. Catalog v2 e fallback API→Playwright em 401/403 foram testados localmente; conta, API e portais reais ainda não foram validados.
 
 Para o primeiro piloto, manter `REVIEW`, uma loja e uma operação escolhida. O código atual já cobre mais domínios e múltiplas lojas; isso não significa que esse escopo esteja aprovado ou validado.
 
@@ -118,6 +121,7 @@ A configuração é lida de variáveis de ambiente por `ifood/config.py`. O plug
 |---|---|
 | Habilitação e operador | `IFOOD_LOJA_ENABLED`, `IFOOD_LOJA_OPERATORS`, `IFOOD_LOJA_AGENT_OPERATOR_ID` |
 | API iFood | `IFOOD_LOJA_MERCHANT_ID`, `IFOOD_LOJA_CLIENT_ID`, `IFOOD_LOJA_CLIENT_SECRET` ou `IFOOD_LOJA_ACCESS_TOKEN` |
+| Anota AI exportação somente-leitura | `IFOOD_LOJA_ANOTA_AI_TOKEN`, `IFOOD_LOJA_ANOTA_AI_API_BASE` |
 | Google Sheets | `IFOOD_LOJA_SHEETS_ID`, `IFOOD_LOJA_SHEETS_WEBHOOK_SECRET`, `IFOOD_LOJA_GOOGLE_SERVICE_ACCOUNT_FILE` (ou JSON/token) |
 | Poller | `IFOOD_LOJA_SHEETS_POLL_SECONDS` — `0` mantém desativado |
 | Playwright | `IFOOD_LOJA_PLAYWRIGHT_CDP_URL`, `IFOOD_LOJA_PLAYWRIGHT_USER_DATA_DIR`, `IFOOD_LOJA_PLAYWRIGHT_HEADLESS` |
@@ -146,7 +150,7 @@ O código pode ser validado localmente com dados sintéticos. Nenhuma autorizaç
 
 Validado nesta execução:
 
-- `py -3.12 -m pytest -q`: 56 testes passaram.
+- Testes automatizados exercitam Catalog v2, fallback API → Playwright e exportação Anota AI com dados sintéticos.
 - `python -m ruff check .` passou.
 - `npm run build` passou, incluindo a verificação TypeScript, e gerou `dashboard/dist/index.js`.
 

@@ -372,12 +372,12 @@ async def sync_overview(
                 "playwright_configured": bool(
                     cfg.playwright_cdp_url or cfg.playwright_user_data_dir
                 ),
-                "default_sync_mode": "REVIEW",
+                "default_sync_mode": cfg.default_sync_mode,
                 "default_execution_mode": cfg.default_execution_mode,
                 "write_capabilities": sorted(cfg.write_capabilities),
                 "validated_portal_domains": sorted(cfg.validated_portal_domains),
                 "write_capabilities_configured": bool(cfg.write_capabilities),
-                "automation_policy": "REVIEW",
+                "automation_policy": cfg.default_sync_mode,
                 "max_price_change_pct": cfg.max_price_change_pct,
                 "portal_sessions": portal_sessions,
             },

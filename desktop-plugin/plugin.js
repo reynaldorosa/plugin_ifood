@@ -26,6 +26,7 @@ const STATUS_LABEL = {
   PENDING: 'Aguardando revisão',
   EXECUTING: 'Em execução',
   EXECUTED: 'Executado',
+  APPLIED: 'Aplicado',
   CONFIRMED: 'Confirmado',
   UNCERTAIN: 'Resultado incerto',
   BLOCKED: 'Bloqueado',
@@ -38,6 +39,7 @@ const STATUS_TONE = {
   PENDING: 'border-amber-500/40 text-amber-400',
   EXECUTING: 'border-sky-500/40 text-sky-400',
   EXECUTED: 'border-emerald-500/40 text-emerald-400',
+  APPLIED: 'border-emerald-500/40 text-emerald-400',
   CONFIRMED: 'border-emerald-500/40 text-emerald-400',
   UNCERTAIN: 'border-orange-500/40 text-orange-400',
   BLOCKED: 'border-rose-500/40 text-rose-400',
@@ -52,7 +54,7 @@ const DOMAIN_LABEL = {
   STORE_STATUS: 'Status da loja',
   PREP_TIME: 'Tempo de preparo'
 }
-const CHANNEL_LABEL = { IFOOD: 'iFood', NINETY_NINE: '99Food', ANOTA_AI: 'Anota AI' }
+const CHANNEL_LABEL = { IFOOD: 'iFood', '99FOOD': '99Food', NINETY_NINE: '99Food', ANOTA_AI: 'Anota AI' }
 const WEEKDAY = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb']
 
 /* ── utilidades ─────────────────────────────────────────────────────────── */
@@ -376,9 +378,9 @@ function IfoodPage() {
       }),
       jsx(Section, {
         title: 'Sessões dos portais',
-        children: jsx('div', { className: 'flex flex-col', children: ['IFOOD', 'NINETY_NINE', 'ANOTA_AI'].map(key => {
+        children: jsx('div', { className: 'flex flex-col', children: ['IFOOD', '99FOOD', 'ANOTA_AI'].map(key => {
           const perTenant = sessions[tenant || data.tenant_key] || Object.values(sessions)[0] || {}
-          const s = perTenant[key] || {}
+          const s = perTenant[key] || (key === '99FOOD' ? perTenant.NINETY_NINE : null) || {}
           const state = fmtState(s.state)
           const ok = state === 'OK' || state === 'CONFIGURED'
           return jsx(Row, {

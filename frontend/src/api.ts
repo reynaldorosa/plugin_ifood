@@ -9,6 +9,7 @@ export interface SyncReadiness {
   webhook_configured: boolean;
   sheets_poller_enabled: boolean;
   ifood_api_configured: boolean;
+  anota_ai_configured: boolean;
   playwright_configured: boolean;
   default_sync_mode: string;
   default_execution_mode: string;
@@ -159,3 +160,8 @@ export const confirmLegacyOpeningHours = (proposal_id: string) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ proposal_id }),
   });
+
+export const fetchAnotaAiExport = (storeKey: string) =>
+  fetchJSON<{ total_items: number; cardapio_rows: string[][] }>(
+    `${API_BASE}/anota-ai/export?store_key=${encodeURIComponent(storeKey)}`,
+  );

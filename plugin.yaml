@@ -12,6 +12,7 @@ provides_tools:
   - ifood_list_proposals
   - ifood_confirm_proposal
   - ifood_reject_proposal
+  - ifood_import_anota_ai_menu
 permissions:
   default_access: deny
   operator_only: true

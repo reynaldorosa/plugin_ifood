@@ -1,5 +1,6 @@
 import {
   fetchAppsScript,
+  fetchAnotaAiExport,
   fetchSyncOverview,
   fetchTenants,
   reconcileSyncProposal,
@@ -156,6 +157,8 @@ export function IfoodStorePage() {
   const [tenants, setTenants] = useState<Array<{ tenant_key: string; sheet_configured: boolean }>>([]);
   const [tenant, setTenant] = useState('');
   const [appScript, setAppScript] = useState('');
+  const [anotaStore, setAnotaStore] = useState('loja-anota-ai');
+  const [anotaRows, setAnotaRows] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -345,6 +348,11 @@ export function IfoodStorePage() {
                   label="Plugin habilitado"
                   value={ready.enabled ? 'configurado' : 'pendente'}
                   tone={ready.enabled ? 'is-ok' : 'is-warn'}
+                />
+                <KvRow
+                  label="Anota AI API (export)"
+                  value={ready.anota_ai_configured ? 'configurado' : 'pendente'}
+                  tone={ready.anota_ai_configured ? 'is-ok' : 'is-warn'}
                 />
                 <KvRow
                   label="Google Sheets API"
@@ -582,6 +590,24 @@ export function IfoodStorePage() {
                   {appScript ? 'Recarregar Apps Script' : 'Carregar Apps Script'}
                 </button>
               </div>
+            </div>
+
+            <div className="ifood-section-card">
+              <h2 className="ifood-section-title">Exportar cardápio Anota AI</h2>
+              <p className="ifood-muted">Leitura somente: copie as linhas para a aba Cardapio da planilha.</p>
+              <div className="ifood-row-actions">
+                <input className="ifood-select" aria-label="Chave da loja Anota AI" value={anotaStore} onChange={(e) => setAnotaStore(e.target.value)} />
+                <button type="button" className="ifood-btn" disabled={!!busy || !anotaStore.trim()} onClick={() => void act('anota', async () => {
+                  const result = await fetchAnotaAiExport(anotaStore.trim());
+                  setAnotaRows(result.cardapio_rows.map((row) => row.map((cell) => String(cell).replace(/[\t\r\n]+/g, ' ')).join('\t')).join('\n'));
+                  setNotice(`${result.total_items} itens exportados para consulta.`);
+                })}>{busy === 'anota' ? 'Carregando…' : 'Carregar exportação'}</button>
+                {anotaRows ? <button type="button" className="ifood-btn" onClick={() => void act('copy-anota', async () => {
+                  await navigator.clipboard.writeText(anotaRows);
+                  setNotice('Linhas copiadas para a área de transferência.');
+                })}>Copiar linhas</button> : null}
+              </div>
+              {anotaRows ? <pre className="ifood-pre">{anotaRows}</pre> : null}
             </div>
 
             <div className="ifood-section-card">

@@ -72,8 +72,7 @@ def require_approved_write(
                 ):
                     raise PermissionError("Os valores de escrita diferem dos valores aprovados.")
                 if (
-                    payload.get("original_price_cents") is not None
-                    and payload.get("original_price_cents") != approved_item.get("original_price_cents")
+                    payload.get("original_price_cents") != approved_item.get("original_price_cents")
                 ):
                     raise PermissionError("Os valores de escrita diferem dos valores aprovados.")
             elif capability == "catalog_availability":

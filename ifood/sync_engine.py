@@ -1666,11 +1666,23 @@ class SyncEngine:
             portal_url=str(meta.get("portal_url") or ""),
         )
         domain = ChangeDomain(prop["domain"])
-        backend = BackendUsed(prop["backend_planned"])
+        backend = BackendUsed((prop.get("outcome") or {}).get("fallback_backend") or prop["backend_planned"])
         current, live = self._observe_current(
             store=store, domain=domain, backend=backend,
             desired_payload=prop["proposed"], last_snapshot=None,
         )
+        if (
+            backend == BackendUsed.IFOOD_API and not live
+            and self._last_observation_detail.get("api_auth_error")
+            and store.channel == StoreChannel.IFOOD
+            and store.execution_mode == ExecutionMode.API_FIRST
+            and store.portal_url and domain.value in self.config.validated_portal_domains
+        ):
+            backend = BackendUsed.PLAYWRIGHT
+            current, live = self._observe_current(
+                store=store, domain=domain, backend=backend,
+                desired_payload=prop["proposed"], last_snapshot=None,
+            )
         if not live:
             raise ValueError("Leitura de reconciliação indisponível; execução permanece UNCERTAIN.")
         applied = self._matches_live_state(domain, current, prop["proposed"])

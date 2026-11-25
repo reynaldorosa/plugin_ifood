@@ -199,7 +199,7 @@ TOOL_SPECS: list[dict[str, Any]] = [
         "schema": {
             "name": "ifood_sync_status",
             "description": "Verifica prontidão (Google Sheets, iFood API, Playwright) e propostas pendentes.",
-            "parameters": {"type": "object", "properties": {}, "required": []},
+            "parameters": {"type": "object", "properties": {"tenant_key": {"type": "string"}}, "required": []},
         },
         "handler": tool_sync_status,
     },
@@ -215,6 +215,7 @@ TOOL_SPECS: list[dict[str, Any]] = [
                     "hours_rows": {"type": "array"},
                     "catalog_rows": {"type": "array"},
                     "dry_run": {"type": "boolean"},
+                    "tenant_key": {"type": "string"},
                 },
                 "required": [],
             },
@@ -228,7 +229,7 @@ TOOL_SPECS: list[dict[str, Any]] = [
             "description": "Lista propostas pendentes ou bloqueadas por guardrail vindas da planilha Google Sheets.",
             "parameters": {
                 "type": "object",
-                "properties": {"status": {"type": "string"}},
+                "properties": {"status": {"type": "string"}, "tenant_key": {"type": "string"}},
                 "required": [],
             },
         },
@@ -244,6 +245,7 @@ TOOL_SPECS: list[dict[str, Any]] = [
                 "properties": {
                     "proposal_id": {"type": "string"},
                     "override_guardrail": {"type": "boolean"},
+                    "tenant_key": {"type": "string"},
                 },
                 "required": ["proposal_id"],
             },
@@ -260,6 +262,7 @@ TOOL_SPECS: list[dict[str, Any]] = [
                 "properties": {
                     "proposal_id": {"type": "string"},
                     "reason": {"type": "string"},
+                    "tenant_key": {"type": "string"},
                 },
                 "required": ["proposal_id"],
             },

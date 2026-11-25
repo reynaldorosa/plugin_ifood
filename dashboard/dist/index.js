@@ -150,6 +150,8 @@ function IfoodStorePage() {
     const [tenants, setTenants] = (0, hermesReact_1.useState)([]);
     const [tenant, setTenant] = (0, hermesReact_1.useState)('');
     const [appScript, setAppScript] = (0, hermesReact_1.useState)('');
+    const [anotaStore, setAnotaStore] = (0, hermesReact_1.useState)('loja-anota-ai');
+    const [anotaRows, setAnotaRows] = (0, hermesReact_1.useState)('');
     const [loading, setLoading] = (0, hermesReact_1.useState)(true);
     const [busy, setBusy] = (0, hermesReact_1.useState)('');
     const [error, setError] = (0, hermesReact_1.useState)('');
@@ -278,6 +280,7 @@ function IfoodStorePage() {
                     hermesReact_1.React.createElement("h2", { className: "ifood-section-title" }, "Prontid\u00E3o das integra\u00E7\u00F5es"),
                     hermesReact_1.React.createElement("div", { className: "ifood-kv-list" },
                         hermesReact_1.React.createElement(KvRow, { label: "Plugin habilitado", value: ready.enabled ? 'configurado' : 'pendente', tone: ready.enabled ? 'is-ok' : 'is-warn' }),
+                        hermesReact_1.React.createElement(KvRow, { label: "Anota AI API (export)", value: ready.anota_ai_configured ? 'configurado' : 'pendente', tone: ready.anota_ai_configured ? 'is-ok' : 'is-warn' }),
                         hermesReact_1.React.createElement(KvRow, { label: "Google Sheets API", value: ready.sheets_api_configured ? 'configurado' : 'pendente', tone: ready.sheets_api_configured ? 'is-ok' : 'is-warn' }),
                         hermesReact_1.React.createElement(KvRow, { label: "Planilha da loja", value: ready.sheets_spreadsheet_id ? 'informada' : 'não informada', tone: ready.sheets_spreadsheet_id ? 'is-ok' : 'is-warn' }),
                         hermesReact_1.React.createElement(KvRow, { label: "Webhook HMAC", value: ready.webhook_configured ? 'configurado' : 'pendente', tone: ready.webhook_configured ? 'is-ok' : 'is-warn' }),
@@ -373,6 +376,21 @@ function IfoodStorePage() {
                                 setAppScript(r.content || '');
                             }) }, appScript ? 'Recarregar Apps Script' : 'Carregar Apps Script'))),
                 hermesReact_1.React.createElement("div", { className: "ifood-section-card" },
+                    hermesReact_1.React.createElement("h2", { className: "ifood-section-title" }, "Exportar card\u00E1pio Anota AI"),
+                    hermesReact_1.React.createElement("p", { className: "ifood-muted" }, "Leitura somente: copie as linhas para a aba Cardapio da planilha."),
+                    hermesReact_1.React.createElement("div", { className: "ifood-row-actions" },
+                        hermesReact_1.React.createElement("input", { className: "ifood-select", "aria-label": "Chave da loja Anota AI", value: anotaStore, onChange: (e) => setAnotaStore(e.target.value) }),
+                        hermesReact_1.React.createElement("button", { type: "button", className: "ifood-btn", disabled: !!busy || !anotaStore.trim(), onClick: () => void act('anota', async () => {
+                                const result = await (0, api_1.fetchAnotaAiExport)(anotaStore.trim());
+                                setAnotaRows(result.cardapio_rows.map((row) => row.map((cell) => String(cell).replace(/[\t\r\n]+/g, ' ')).join('\t')).join('\n'));
+                                setNotice(`${result.total_items} itens exportados para consulta.`);
+                            }) }, busy === 'anota' ? 'Carregando…' : 'Carregar exportação'),
+                        anotaRows ? hermesReact_1.React.createElement("button", { type: "button", className: "ifood-btn", onClick: () => void act('copy-anota', async () => {
+                                await navigator.clipboard.writeText(anotaRows);
+                                setNotice('Linhas copiadas para a área de transferência.');
+                            }) }, "Copiar linhas") : null),
+                    anotaRows ? hermesReact_1.React.createElement("pre", { className: "ifood-pre" }, anotaRows) : null),
+                hermesReact_1.React.createElement("div", { className: "ifood-section-card" },
                     hermesReact_1.React.createElement("div", { className: "ifood-section-head" },
                         hermesReact_1.React.createElement("h2", { className: "ifood-section-title" }, "Apps Script (webhook assinado)"),
                         appScript ? (hermesReact_1.React.createElement("button", { type: "button", className: "ifood-btn", onClick: () => void copyScript() }, "Copiar")) : null),
@@ -384,7 +402,7 @@ function IfoodStorePage() {
 "./api": function(module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.confirmLegacyOpeningHours = exports.proposeLegacyOpeningHours = exports.fetchLegacyOpeningHours = exports.fetchAppsScript = exports.reconcileSyncProposal = exports.rejectSyncProposal = exports.confirmSyncProposal = exports.triggerSheetSync = exports.fetchSyncOverview = exports.fetchTenants = exports.API_BASE = void 0;
+exports.fetchAnotaAiExport = exports.confirmLegacyOpeningHours = exports.proposeLegacyOpeningHours = exports.fetchLegacyOpeningHours = exports.fetchAppsScript = exports.reconcileSyncProposal = exports.rejectSyncProposal = exports.confirmSyncProposal = exports.triggerSheetSync = exports.fetchSyncOverview = exports.fetchTenants = exports.API_BASE = void 0;
 const hermesReact_1 = require("./hermesReact");
 exports.API_BASE = '/api/plugins/ifood-loja';
 const fetchTenants = () => (0, hermesReact_1.fetchJSON)(`${exports.API_BASE}/tenants`);
@@ -427,6 +445,8 @@ const confirmLegacyOpeningHours = (proposal_id) => (0, hermesReact_1.fetchJSON)(
     body: JSON.stringify({ proposal_id }),
 });
 exports.confirmLegacyOpeningHours = confirmLegacyOpeningHours;
+const fetchAnotaAiExport = (storeKey) => (0, hermesReact_1.fetchJSON)(`${exports.API_BASE}/anota-ai/export?store_key=${encodeURIComponent(storeKey)}`);
+exports.fetchAnotaAiExport = fetchAnotaAiExport;
 
 },
 "./hermesReact": function(module, exports, require) {
