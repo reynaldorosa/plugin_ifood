@@ -225,6 +225,7 @@ def test_dashboard_bundle_renders_desktop_and_mobile_without_errors() -> None:
                 assert "Loja iFood / Sheets" in body_text, (body_text, errors)
                 assert "A planilha é o comando" in body_text
                 assert "prontidão das integrações" in body_text.lower()
+                assert "Anota AI API (export)" in body_text
                 assert "política de escrita" in body_text.lower()
                 assert "sessões dos portais" in body_text.lower()
                 assert "último lote" in body_text.lower()
@@ -256,6 +257,7 @@ def test_dashboard_bundle_renders_desktop_and_mobile_without_errors() -> None:
                 page.wait_for_timeout(150)
                 sheet_text = page.locator("body").inner_text()
                 assert "Sincronizar agora" in sheet_text, (sheet_text, errors)
+                assert "Carregar exportação" in sheet_text
 
                 overflow = page.evaluate(
                     "document.documentElement.scrollWidth > document.documentElement.clientWidth + 2"

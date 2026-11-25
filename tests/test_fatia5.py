@@ -88,6 +88,9 @@ def test_catalog_v2_patch_price_and_status_enforce_approval_and_send_official_pa
         with pytest.raises(PermissionError, match="valores de escrita"):
             client.patch_item_price(item_id="item-1", price_brl=99.9, merchant_id=MERCHANT_1)
 
+        with pytest.raises(PermissionError, match="valores de escrita"):
+            client.patch_item_price(item_id="item-1", price_brl=34.90, merchant_id=MERCHANT_1)
+
         # Item fora da proposta deve ser recusado
         with pytest.raises(PermissionError, match="não consta na proposta"):
             client.patch_item_status(item_id="item-outro", available=False, merchant_id=MERCHANT_1)
@@ -530,3 +533,61 @@ async def test_plugin_api_anota_ai_export_route(tmp_path: Path, monkeypatch) -> 
     assert res["channel"] == "ANOTA_AI"
     assert res["total_items"] == 1
     assert res["cardapio_rows"][1][1] == "a1"
+
+
+def test_overview_exposes_auto_apply(tmp_path: Path) -> None:
+    import asyncio
+
+    cfg = _make_config(tmp_path, default_sync_mode="AUTO_APPLY")
+    overview = asyncio.run(plugin_api.sync_overview(tenant_key="default", cfg=cfg))
+    assert overview["readiness"]["default_sync_mode"] == "AUTO_APPLY"
+    assert overview["readiness"]["automation_policy"] == "AUTO_APPLY"
+
+
+def test_reconcile_uses_actual_fallback_backend(tmp_path: Path, monkeypatch) -> None:
+    from ifood.models import BackendUsed, canonical_digest
+
+    cfg = _make_config(tmp_path, validated_portal_domains=frozenset({"CATALOG"}))
+    engine = SyncEngine(cfg)
+    proposed = [{"item_id": "x", "price_cents": 100}]
+    prop = {"status": "UNCERTAIN", "metadata": {"portal_url": "https://portal.ifood.com.br"},
+            "store_key": "loja", "channel": "IFOOD", "merchant_id": MERCHANT_1,
+            "execution_mode": "API_FIRST", "domain": "CATALOG", "backend_planned": "IFOOD_API",
+            "outcome": {"fallback_backend": "PLAYWRIGHT"}, "proposed": proposed,
+            "current_hash": "old", "proposed_hash": canonical_digest(proposed)}
+    monkeypatch.setattr(engine, "_load_proposal_for_tenant", lambda *_: prop)
+    seen = []
+    def observe(**kwargs):
+        seen.append(kwargs["backend"])
+        return proposed, True
+    monkeypatch.setattr(engine, "_observe_current", observe)
+    monkeypatch.setattr(engine.storage, "resolve_proposal", lambda *args, **kwargs: {"status": kwargs["status"]})
+    result = engine.reconcile_uncertain(proposal_id="p", actor_id="operator")
+    assert seen == [BackendUsed.PLAYWRIGHT]
+    assert result["outcome"] == "CONFIRMED"
+
+
+def test_reconcile_api_auth_error_uses_validated_portal(tmp_path: Path, monkeypatch) -> None:
+    from ifood.models import BackendUsed, canonical_digest
+
+    cfg = _make_config(tmp_path, validated_portal_domains=frozenset({"CATALOG"}))
+    engine = SyncEngine(cfg)
+    proposed = [{"item_id": "x", "price_cents": 100}]
+    prop = {"status": "UNCERTAIN", "metadata": {"portal_url": "https://portal.ifood.com.br"},
+            "store_key": "loja", "channel": "IFOOD", "merchant_id": MERCHANT_1,
+            "execution_mode": "API_FIRST", "domain": "CATALOG", "backend_planned": "IFOOD_API",
+            "outcome": {}, "proposed": proposed, "current_hash": "old",
+            "proposed_hash": canonical_digest(proposed)}
+    monkeypatch.setattr(engine, "_load_proposal_for_tenant", lambda *_: prop)
+    seen = []
+    def observe(**kwargs):
+        seen.append(kwargs["backend"])
+        if kwargs["backend"] == BackendUsed.IFOOD_API:
+            engine._last_observation_detail = {"api_auth_error": True}
+            return None, False
+        return proposed, True
+    monkeypatch.setattr(engine, "_observe_current", observe)
+    monkeypatch.setattr(engine.storage, "resolve_proposal", lambda *args, **kwargs: {"status": kwargs["status"]})
+    result = engine.reconcile_uncertain(proposal_id="p", actor_id="operator")
+    assert seen == [BackendUsed.IFOOD_API, BackendUsed.PLAYWRIGHT]
+    assert result["outcome"] == "CONFIRMED"

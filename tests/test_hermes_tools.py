@@ -86,3 +86,16 @@ def test_hermes_tools_enforce_default_deny_and_create_review_proposals(
     listed = json.loads(tool_list_proposals(status="PENDING"))
     assert listed["ok"] is True
     assert listed["data"] == []
+
+
+def test_manifest_and_multi_tenant_schemas_match_tools() -> None:
+    import inspect
+
+    from ifood.hermes_tools import TOOL_SPECS
+
+    manifest = (Path(__file__).resolve().parent.parent / "plugin.yaml").read_text(encoding="utf-8")
+    provided = {line.strip()[2:] for line in manifest.split("provides_tools:", 1)[1].split("permissions:", 1)[0].splitlines() if line.strip().startswith("- ")}
+    assert provided == {spec["name"] for spec in TOOL_SPECS}
+    for spec in TOOL_SPECS:
+        if "tenant_key" in inspect.signature(spec["handler"]).parameters:
+            assert spec["schema"]["parameters"]["properties"]["tenant_key"] == {"type": "string"}
