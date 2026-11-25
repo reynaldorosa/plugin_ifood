@@ -14,415 +14,304 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.IfoodStorePage = IfoodStorePage;
 const api_1 = require("./api");
 const hermesReact_1 = require("./hermesReact");
-const EXAMPLE_SNAPSHOT = JSON.stringify({
-    stores_rows: [
-        {
-            store_key: 'loja-centro',
-            channel: 'IFOOD',
-            merchant_id: '550e8400-e29b-41d4-a716-446655440000',
-            store_name: 'Loja Centro (iFood)',
-            execution_mode: 'API_FIRST',
-            sync_mode: 'REVIEW',
-            enabled: true,
-            prep_time_minutes: 25,
-            status_action: 'OPEN',
-            portal_url: 'https://portal.ifood.com.br',
-        },
-    ],
-    hours_rows: [
-        { store_key: 'loja-centro', day_of_week: 'SEGUNDA', start_time: '09:00', end_time: '18:00' },
-        { store_key: 'loja-centro', day_of_week: 'TERCA', start_time: '09:00', end_time: '18:00' },
-        { store_key: 'loja-centro', day_of_week: 'QUARTA', start_time: '09:00', end_time: '18:00' },
-        { store_key: 'loja-centro', day_of_week: 'QUINTA', start_time: '09:00', end_time: '18:00' },
-        { store_key: 'loja-centro', day_of_week: 'SEXTA', start_time: '09:00', end_time: '18:00' },
-        { store_key: 'loja-centro', day_of_week: 'SABADO', start_time: '09:00', end_time: '18:00' },
-        { store_key: 'loja-centro', day_of_week: 'DOMINGO', start_time: '09:00', end_time: '18:00' },
-    ],
-    catalog_rows: [
-        {
-            store_key: 'loja-centro',
-            item_id: 'combo-01',
-            item_name: 'Combo Clássico',
-            price_brl: '34,90',
-            available: true,
-        },
-    ],
-    dry_run: false,
-}, null, 2);
-function badgeClass(value) {
-    const upper = value.toUpperCase();
-    if (upper === 'CONFIRMED' || upper === 'APPLIED' || upper === 'OK')
+const DOMAIN = {
+    OPENING_HOURS: 'Horários',
+    CATALOG: 'Cardápio',
+    STORE_STATUS: 'Status da loja',
+    PREP_TIME: 'Tempo de preparo',
+};
+const CHANNEL = { IFOOD: 'iFood', '99FOOD': '99Food', ANOTA_AI: 'Anota AI' };
+const STATUS = {
+    PENDING: 'Aguardando revisão',
+    EXECUTING: 'Em execução',
+    EXECUTED: 'Aplicado',
+    APPLIED: 'Aplicado',
+    CONFIRMED: 'Confirmado',
+    UNCERTAIN: 'Resultado incerto',
+    BLOCKED: 'Bloqueado',
+    FAILED: 'Falhou',
+    REJECTED: 'Rejeitado',
+    STALE: 'Expirado',
+    EXPIRED: 'Expirado',
+};
+const WEEKDAY = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+function badge(value) {
+    const v = String(value || '').toUpperCase();
+    if (['CONFIRMED', 'APPLIED', 'EXECUTED', 'OK'].includes(v))
         return 'ifood-badge is-ok';
-    if (upper.includes('BLOCKED') || upper.includes('CAPTCHA') || upper === 'ERROR' || upper === 'DIVERGENT') {
+    if (['BLOCKED', 'FAILED', 'DIVERGENT', 'ERROR'].includes(v) || v.includes('CAPTCHA'))
         return 'ifood-badge is-danger';
-    }
-    if (upper.includes('PENDING') || upper.includes('LOGIN') || upper === 'REVIEW') {
+    if (v.includes('PENDING') || v.includes('LOGIN') || v === 'REVIEW' || v === 'UNCERTAIN')
         return 'ifood-badge is-warn';
-    }
     return 'ifood-badge is-neutral';
 }
+function when(iso) {
+    if (!iso)
+        return '—';
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? String(iso) : d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+function changeLines(p) {
+    const cur = p.current;
+    const pro = p.proposed;
+    if (p.domain === 'OPENING_HOURS') {
+        const fmt = (rows) => (rows || []).map((s) => `${WEEKDAY[Number(s.dayOfWeek)] ?? s.dayOfWeek} ${s.start}+${s.duration}min`).join(' · ') || 'sem turnos';
+        return [`antes: ${fmt(cur)}`, `depois: ${fmt(pro)}`];
+    }
+    if (p.domain === 'CATALOG') {
+        const before = new Map((cur || []).map((i) => [String(i.item_id), i]));
+        const out = [];
+        for (const item of pro || []) {
+            const old = before.get(String(item.item_id));
+            const bits = [];
+            if (!old)
+                bits.push('novo no cardápio');
+            if (old && old.price_cents !== item.price_cents)
+                bits.push(`R$ ${(old.price_cents / 100).toFixed(2)} → R$ ${(item.price_cents / 100).toFixed(2)}`);
+            if (old && old.available !== item.available)
+                bits.push(item.available ? 'volta ao cardápio' : 'sai do cardápio');
+            if (bits.length)
+                out.push(`${item.item_name || item.item_id}: ${bits.join(' · ')}`);
+            before.delete(String(item.item_id));
+        }
+        for (const rest of before.values())
+            out.push(`${rest.item_name || rest.item_id}: fora da proposta`);
+        return out.length ? out : ['sem diferença em relação ao estado atual'];
+    }
+    if (p.domain === 'STORE_STATUS') {
+        const acts = { PAUSE: 'pausar a loja', RESUME: 'reabrir a loja', OPEN: 'abrir a loja', CLOSE: 'fechar a loja' };
+        const label = acts[String(pro?.status_action || '').toUpperCase()] || `ação ${pro?.status_action || 'não informada'}`;
+        const bits = [label];
+        if (pro?.pause_reason)
+            bits.push(`motivo: ${pro.pause_reason}`);
+        if (pro?.pause_end_iso)
+            bits.push(`até ${when(pro.pause_end_iso)}`);
+        return [`depois: ${bits.join(' · ')}`];
+    }
+    if (p.domain === 'PREP_TIME') {
+        return [
+            `antes: ${cur?.prep_time_minutes != null ? `${cur.prep_time_minutes} min` : 'não informado'}`,
+            `depois: ${pro?.prep_time_minutes != null ? `${pro.prep_time_minutes} min` : 'não informado'}`,
+        ];
+    }
+    return [JSON.stringify(pro)];
+}
 function IfoodStorePage() {
-    const [tab, setTab] = (0, hermesReact_1.useState)('queue');
-    const [overview, setOverview] = (0, hermesReact_1.useState)(null);
+    const [tab, setTab] = (0, hermesReact_1.useState)('overview');
+    const [ov, setOv] = (0, hermesReact_1.useState)(null);
     const [tenants, setTenants] = (0, hermesReact_1.useState)([]);
-    const [tenantKey, setTenantKey] = (0, hermesReact_1.useState)('');
-    const [appsScript, setAppsScript] = (0, hermesReact_1.useState)('');
+    const [tenant, setTenant] = (0, hermesReact_1.useState)('');
+    const [appScript, setAppScript] = (0, hermesReact_1.useState)('');
     const [loading, setLoading] = (0, hermesReact_1.useState)(true);
-    const [busy, setBusy] = (0, hermesReact_1.useState)(false);
+    const [busy, setBusy] = (0, hermesReact_1.useState)('');
     const [error, setError] = (0, hermesReact_1.useState)('');
     const [notice, setNotice] = (0, hermesReact_1.useState)('');
-    const [rowErrors, setRowErrors] = (0, hermesReact_1.useState)([]);
-    const [showInlineSync, setShowInlineSync] = (0, hermesReact_1.useState)(false);
-    const [inlineJson, setInlineJson] = (0, hermesReact_1.useState)(EXAMPLE_SNAPSHOT);
-    const loadAll = (0, hermesReact_1.useCallback)(async (targetTenant = tenantKey) => {
-        if (!targetTenant)
+    const [dryRun, setDryRun] = (0, hermesReact_1.useState)(true);
+    const load = (0, hermesReact_1.useCallback)(async (key) => {
+        if (!key)
             return;
         setLoading(true);
         setError('');
         try {
-            const data = await (0, api_1.fetchSyncOverview)(targetTenant);
-            setOverview(data);
+            setOv(await (0, api_1.fetchSyncOverview)(key));
         }
         catch (e) {
-            setError(e instanceof Error ? e.message : 'Falha ao carregar sincronização.');
+            setError(e instanceof Error ? e.message : 'Falha ao carregar a sincronização.');
         }
         finally {
             setLoading(false);
         }
-    }, [tenantKey]);
+    }, []);
     (0, hermesReact_1.useEffect)(() => {
-        void (0, api_1.fetchTenants)().then(async (items) => {
+        void (0, api_1.fetchTenants)()
+            .then(async (items) => {
             setTenants(items);
-            const first = items[0]?.tenant_key || '';
-            setTenantKey((current) => current || first);
-            if (first) {
-                await loadAll(first);
-            }
-            else {
-                setLoading(false);
-            }
-        }).catch((e) => {
-            setError(e instanceof Error ? e.message : 'Falha ao listar padarias.');
+            const first = items[0]?.tenant_key || 'default';
+            setTenant(first);
+            await load(first);
+        })
+            .catch((e) => {
+            setError(e instanceof Error ? e.message : 'Falha ao listar as lojas.');
             setLoading(false);
         });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
-    const handleLoadAppsScript = async () => {
-        if (appsScript)
-            return;
-        try {
-            const res = await (0, api_1.fetchAppsScript)();
-            setAppsScript(res.content || '');
-        }
-        catch (e) {
-            setError(e instanceof Error ? e.message : 'Falha ao obter Apps Script.');
-        }
-    };
-    const handleSyncPull = async () => {
-        setBusy(true);
+    const ready = ov?.readiness;
+    const proposals = ov?.proposals || [];
+    const events = ov?.audit_events || [];
+    const snaps = ov?.snapshots || [];
+    const sessions = (ov?.portal_sessions || {})[tenant] || {};
+    const pending = proposals.filter((p) => p.status === 'PENDING' || p.status === 'BLOCKED');
+    const applied = proposals.filter((p) => ['EXECUTED', 'APPLIED', 'CONFIRMED'].includes(p.status));
+    const uncertain = proposals.filter((p) => p.status === 'UNCERTAIN');
+    const policy = ready?.automation_policy || ready?.default_sync_mode || 'REVIEW';
+    const caps = ready?.write_capabilities || [];
+    const act = async (key, fn) => {
+        setBusy(key);
         setError('');
-        setNotice('');
-        setRowErrors([]);
         try {
-            const res = await (0, api_1.triggerSheetSync)({ tenant_key: tenantKey });
-            setNotice(res.summary);
-            setRowErrors(res.row_errors || []);
-            await loadAll();
+            await fn();
         }
         catch (e) {
-            setError(e instanceof Error ? e.message : 'Falha ao sincronizar com Google Sheets.');
+            setError(e instanceof Error ? e.message : 'Falha na operação.');
         }
         finally {
-            setBusy(false);
+            setBusy('');
         }
     };
-    const handleInlineSync = async () => {
-        setBusy(true);
-        setError('');
-        setNotice('');
-        setRowErrors([]);
-        try {
-            const parsed = JSON.parse(inlineJson);
-            const res = await (0, api_1.triggerSheetSync)({ ...parsed, tenant_key: tenantKey });
-            setNotice(res.summary);
-            setRowErrors(res.row_errors || []);
-            await loadAll();
-        }
-        catch (e) {
-            setError(e instanceof Error ? e.message : 'Snapshot JSON inválido.');
-        }
-        finally {
-            setBusy(false);
-        }
-    };
-    const handleConfirmProposal = async (proposalId, overrideGuardrail = false) => {
-        setBusy(true);
-        setError('');
-        setNotice('');
-        try {
-            const res = await (0, api_1.confirmSyncProposal)(proposalId, tenantKey, overrideGuardrail);
-            const outcome = String(res.execution.outcome || '');
-            setNotice(`Proposta ${proposalId.slice(0, 8)} executada: ${outcome} — ${String(res.execution.message || '')}`);
-            await loadAll();
-        }
-        catch (e) {
-            setError(e instanceof Error ? e.message : 'Falha ao confirmar proposta.');
-        }
-        finally {
-            setBusy(false);
-        }
-    };
-    const handleRejectProposal = async (proposalId) => {
-        setBusy(true);
-        setError('');
-        setNotice('');
-        try {
-            await (0, api_1.rejectSyncProposal)(proposalId, 'Rejeitado manualmente no Dashboard Hermes', tenantKey);
-            setNotice(`Proposta ${proposalId.slice(0, 8)} rejeitada.`);
-            await loadAll();
-        }
-        catch (e) {
-            setError(e instanceof Error ? e.message : 'Falha ao rejeitar proposta.');
-        }
-        finally {
-            setBusy(false);
-        }
-    };
-    const handleReconcileProposal = async (proposalId) => {
-        setBusy(true);
-        setError('');
-        setNotice('');
-        try {
-            const result = await (0, api_1.reconcileSyncProposal)(proposalId, tenantKey);
-            setNotice(`Reconciliação somente leitura: ${result.outcome}.`);
-            await loadAll();
-        }
-        catch (e) {
-            setError(e instanceof Error ? e.message : 'Falha na reconciliação.');
-        }
-        finally {
-            setBusy(false);
-        }
-    };
-    const proposals = overview?.proposals || [];
-    const activeProposals = proposals.filter((p) => p.status === 'PENDING' || p.status === 'BLOCKED');
-    const snapshots = overview?.snapshots || [];
-    const auditEvents = overview?.audit_events || [];
-    const readiness = overview?.readiness;
+    const sync = () => act('sync', async () => {
+        const out = await (0, api_1.triggerSheetSync)({ tenant_key: tenant, dry_run: dryRun });
+        setNotice(`${dryRun ? 'Simulação' : 'Sincronização'}: ${out.summary || 'concluída'}`);
+        await load(tenant);
+    });
     return (hermesReact_1.React.createElement("main", { className: "ifood-sync-root" },
         hermesReact_1.React.createElement("header", { className: "ifood-header" },
             hermesReact_1.React.createElement("div", null,
                 hermesReact_1.React.createElement("span", { className: "ifood-eyebrow" }, "HERMES / OPERA\u00C7\u00C3O DE LOJAS"),
-                hermesReact_1.React.createElement("h1", null, "Central de sincroniza\u00E7\u00E3o"),
-                hermesReact_1.React.createElement("p", { className: "ifood-subtitle" }, "Propostas auditadas para revis\u00E3o. Escritas permanecem bloqueadas at\u00E9 valida\u00E7\u00E3o de cada capacidade, merchant e executor.")),
+                hermesReact_1.React.createElement("h1", null, "Loja iFood / Sheets"),
+                hermesReact_1.React.createElement("p", { className: "ifood-subtitle" }, "A planilha \u00E9 o comando. A diverg\u00EAncia \u00E9 aplicada e registrada com autor \u2014 o Telegram avisa, n\u00E3o autoriza.")),
             hermesReact_1.React.createElement("div", { className: "ifood-header-actions" },
-                hermesReact_1.React.createElement("button", { type: "button", className: "ifood-btn-primary", disabled: busy || loading, onClick: () => void handleSyncPull() }, busy ? 'Sincronizando…' : 'Sincronizar Planilha Agora'),
-                hermesReact_1.React.createElement("button", { type: "button", className: "ifood-btn-secondary", disabled: busy, onClick: () => setShowInlineSync((prev) => !prev) }, showInlineSync ? 'Ocultar Snapshot JSON' : 'Simular / Enviar Snapshot'))),
-        hermesReact_1.React.createElement("section", { className: "ifood-card", "aria-label": "Padaria selecionada" },
-            hermesReact_1.React.createElement("label", { htmlFor: "ifood-tenant-select" }, "Padaria"),
-            hermesReact_1.React.createElement("select", { id: "ifood-tenant-select", "aria-label": "Selecionar padaria", value: tenantKey, onChange: (e) => {
-                    const next = e.target.value;
-                    setOverview(null);
-                    setTenantKey(next);
-                    void loadAll(next);
-                } }, tenants.map((tenant) => hermesReact_1.React.createElement("option", { key: tenant.tenant_key, value: tenant.tenant_key }, tenant.tenant_key)))),
-        hermesReact_1.React.createElement("section", { className: "ifood-summary-grid", "aria-label": "Resumo da opera\u00E7\u00E3o" },
+                tenants.length > 1 ? (hermesReact_1.React.createElement("select", { "aria-label": "Selecionar loja", value: tenant, onChange: (e) => { setTenant(e.target.value); setOv(null); void load(e.target.value); } }, tenants.map((t) => hermesReact_1.React.createElement("option", { key: t.tenant_key, value: t.tenant_key }, t.tenant_key)))) : (hermesReact_1.React.createElement("span", { className: "ifood-pill is-neutral" }, tenant || 'default')),
+                hermesReact_1.React.createElement("span", { className: policy === 'AUTO_APPLY' ? 'ifood-badge is-ok' : 'ifood-badge is-warn' }, policy === 'AUTO_APPLY' ? 'AUTO_APPLY · a planilha aplica' : 'REVIEW · revisão ativa'),
+                hermesReact_1.React.createElement("button", { type: "button", className: "ifood-btn-secondary", disabled: loading, onClick: () => void load(tenant) }, "Atualizar"))),
+        hermesReact_1.React.createElement("section", { className: "ifood-summary-grid" },
             hermesReact_1.React.createElement("div", { className: "ifood-summary-card" },
-                hermesReact_1.React.createElement("span", null, "Para revisar"),
-                hermesReact_1.React.createElement("strong", null, activeProposals.length),
-                hermesReact_1.React.createElement("small", null, "propostas aguardando decis\u00E3o")),
+                hermesReact_1.React.createElement("span", null, "Aguardando revis\u00E3o"),
+                hermesReact_1.React.createElement("strong", null, pending.length),
+                hermesReact_1.React.createElement("small", null, "bloqueadas por guardrail ou capacidade")),
             hermesReact_1.React.createElement("div", { className: "ifood-summary-card" },
-                hermesReact_1.React.createElement("span", null, "Estados registrados"),
-                hermesReact_1.React.createElement("strong", null, snapshots.length),
-                hermesReact_1.React.createElement("small", null, "dom\u00EDnios com hist\u00F3rico")),
+                hermesReact_1.React.createElement("span", null, "Aplicadas"),
+                hermesReact_1.React.createElement("strong", null, applied.length),
+                hermesReact_1.React.createElement("small", null, "mudan\u00E7as que chegaram ao canal")),
             hermesReact_1.React.createElement("div", { className: "ifood-summary-card" },
                 hermesReact_1.React.createElement("span", null, "Resultado incerto"),
-                hermesReact_1.React.createElement("strong", null, proposals.filter((p) => p.status === 'UNCERTAIN').length),
-                hermesReact_1.React.createElement("small", null, "exigem reconcilia\u00E7\u00E3o"))),
-        readiness && (hermesReact_1.React.createElement("section", { className: "ifood-integrations", "aria-label": "Status das integra\u00E7\u00F5es" },
-            hermesReact_1.React.createElement("div", { className: "ifood-section-heading" },
-                hermesReact_1.React.createElement("span", null, "Integra\u00E7\u00F5es"),
-                hermesReact_1.React.createElement("small", null, "Configura\u00E7\u00E3o e capacidade de execu\u00E7\u00E3o")),
-            hermesReact_1.React.createElement("div", { className: "ifood-readiness-bar" },
-                hermesReact_1.React.createElement("div", { className: readiness.sheets_api_configured ? 'ifood-pill is-ready' : 'ifood-pill' },
-                    "Google Sheets API: ",
-                    readiness.sheets_api_configured ? 'Configurada' : 'Pendente'),
-                hermesReact_1.React.createElement("div", { className: readiness.webhook_configured ? 'ifood-pill is-ready' : 'ifood-pill' },
-                    "Webhook HMAC: ",
-                    readiness.webhook_configured ? 'Ativo' : 'Pendente'),
-                hermesReact_1.React.createElement("div", { className: readiness.sheets_poller_enabled ? 'ifood-pill is-ready' : 'ifood-pill' },
-                    "Poller Google Sheets: ",
-                    readiness.sheets_poller_enabled ? 'Ativo' : 'Desativado'),
-                hermesReact_1.React.createElement("div", { className: readiness.ifood_api_configured ? 'ifood-pill is-ready' : 'ifood-pill' },
-                    "iFood API: ",
-                    readiness.ifood_api_configured ? 'Credencial configurada; escritas exigem contrato validado' : 'Sem credencial'),
-                hermesReact_1.React.createElement("div", { className: readiness.playwright_configured ? 'ifood-pill is-ready' : 'ifood-pill' },
-                    "Playwright: ",
-                    readiness.playwright_configured ? `Configurado; domínios validados: ${readiness.validated_portal_domains.join(', ') || 'nenhum'}` : 'Não configurado'),
-                hermesReact_1.React.createElement("div", { className: "ifood-pill is-neutral" },
-                    "Pol\u00EDtica: REVIEW \u00B7 Capacidades de escrita: ",
-                    readiness.write_capabilities.join(', ') || 'todas bloqueadas'),
-                hermesReact_1.React.createElement("div", { className: "ifood-pill is-neutral" },
-                    "Poller runtime: ",
-                    readiness.sheets_poller_runtime.state,
-                    readiness.sheets_poller_runtime.detail ? ` · ${readiness.sheets_poller_runtime.detail}` : '')))),
-        overview?.portal_sessions?.[tenantKey] && (hermesReact_1.React.createElement("section", { className: "ifood-card", "aria-label": "Sess\u00F5es dos portais" },
-            hermesReact_1.React.createElement("h2", null, "Sess\u00F5es dos portais"),
-            hermesReact_1.React.createElement("div", { className: "ifood-readiness-bar" }, Object.entries(overview.portal_sessions[tenantKey]).map(([channel, session]) => (hermesReact_1.React.createElement("div", { key: channel, className: badgeClass(session.state) },
-                channel,
-                ": ",
-                session.state,
-                session.last_error ? ` · ${session.last_error}` : '')))))),
-        loading && hermesReact_1.React.createElement("p", { className: "ifood-banner is-info" }, "Carregando painel de sincroniza\u00E7\u00E3o\u2026"),
-        error && (hermesReact_1.React.createElement("p", { role: "alert", className: "ifood-banner is-error" }, error)),
-        notice && (hermesReact_1.React.createElement("p", { role: "status", className: "ifood-banner is-success" }, notice)),
-        rowErrors.length > 0 && (hermesReact_1.React.createElement("section", { className: "ifood-card", "aria-label": "Erros de valida\u00E7\u00E3o da planilha" },
-            hermesReact_1.React.createElement("h2", null, "Sincroniza\u00E7\u00E3o bloqueada por erros de linha"),
-            hermesReact_1.React.createElement("ul", null, rowErrors.map((item, index) => (hermesReact_1.React.createElement("li", { key: index },
-                String(item.sheet || 'Aba desconhecida'),
-                " \u00B7 linha ",
-                String(item.row || '?'),
-                ": ",
-                String(item.message || 'Erro de validação'))))))),
-        showInlineSync && (hermesReact_1.React.createElement("section", { className: "ifood-card" },
-            hermesReact_1.React.createElement("h2", null, "Testar / Enviar Snapshot de Planilha (JSON)"),
-            hermesReact_1.React.createElement("p", { className: "ifood-muted" }, "Snapshot sint\u00E9tico para validar parser, regras de diff e bloqueios. Nenhum portal real \u00E9 acessado por este modo."),
-            hermesReact_1.React.createElement("textarea", { "aria-label": "Snapshot JSON", rows: 10, className: "ifood-textarea", value: inlineJson, onChange: (e) => setInlineJson(e.target.value) }),
-            hermesReact_1.React.createElement("div", { className: "ifood-row-actions" },
-                hermesReact_1.React.createElement("button", { type: "button", className: "ifood-btn-primary", disabled: busy, onClick: () => void handleInlineSync() }, "Processar Snapshot")))),
-        hermesReact_1.React.createElement("nav", { className: "ifood-tabs", "aria-label": "Navega\u00E7\u00E3o do plugin" },
-            hermesReact_1.React.createElement("button", { type: "button", className: tab === 'queue' ? 'ifood-tab is-active' : 'ifood-tab', onClick: () => setTab('queue') },
-                "Fila de Mudan\u00E7as (",
-                activeProposals.length,
-                ")"),
-            hermesReact_1.React.createElement("button", { type: "button", className: tab === 'stores' ? 'ifood-tab is-active' : 'ifood-tab', onClick: () => setTab('stores') },
-                "Lojas Sincronizadas (",
-                snapshots.length,
-                ")"),
-            hermesReact_1.React.createElement("button", { type: "button", className: tab === 'setup' ? 'ifood-tab is-active' : 'ifood-tab', onClick: () => {
-                    setTab('setup');
-                    void handleLoadAppsScript();
-                } }, "Google Sheets & Auditoria")),
-        hermesReact_1.React.createElement("div", { className: "ifood-content-heading" },
-            hermesReact_1.React.createElement("div", null,
-                hermesReact_1.React.createElement("span", { className: "ifood-eyebrow" }, "VIS\u00C3O ATUAL"),
-                hermesReact_1.React.createElement("h2", null, tab === 'queue' ? 'Fila de mudanças' : tab === 'stores' ? 'Estados sincronizados' : 'Planilha e auditoria')),
-            hermesReact_1.React.createElement("span", { className: "ifood-muted" }, tab === 'queue' ? `${proposals.length} registros` : tab === 'stores' ? `${snapshots.length} registros` : `${auditEvents.length} eventos recentes`)),
-        tab === 'queue' && (hermesReact_1.React.createElement("section", { className: "ifood-stack" }, proposals.length === 0 ? (hermesReact_1.React.createElement("div", { className: "ifood-card" },
-            hermesReact_1.React.createElement("p", { className: "ifood-muted" },
-                "Nenhuma mudan\u00E7a pendente da planilha. Edite sua planilha Google Sheets ou clique em",
-                hermesReact_1.React.createElement("strong", null, " Sincronizar Planilha Agora"),
-                "."))) : (proposals.map((prop) => {
-            const isActionable = prop.status === 'PENDING' || prop.status === 'BLOCKED';
-            const isUncertain = prop.status === 'UNCERTAIN';
-            const hasWarnings = prop.guardrail_warnings.length > 0;
-            return (hermesReact_1.React.createElement("article", { key: prop.proposal_id, className: "ifood-card" },
-                hermesReact_1.React.createElement("div", { className: "ifood-card-top" },
-                    hermesReact_1.React.createElement("div", null,
-                        hermesReact_1.React.createElement("h3", null,
-                            prop.store_key,
-                            " \u00B7 ",
-                            prop.domain),
-                        hermesReact_1.React.createElement("span", { className: "ifood-meta" },
-                            "Canal: ",
-                            prop.channel,
-                            " \u00B7 Merchant: ",
-                            prop.merchant_id || 'não identificado',
-                            " \u00B7 Origem: ",
-                            prop.trigger_source,
-                            " \u00B7 Executor:",
-                            ' ',
-                            hermesReact_1.React.createElement("strong", null, prop.backend_planned),
-                            hermesReact_1.React.createElement("br", null),
-                            "Vers\u00E3o: ",
-                            String(prop.metadata.source_version || '—'),
-                            " \u00B7 Expira: ",
-                            new Date(prop.expires_at).toLocaleString())),
-                    hermesReact_1.React.createElement("span", { className: badgeClass(prop.status) }, prop.status)),
-                hasWarnings && (hermesReact_1.React.createElement("div", { className: "ifood-guardrail-box" },
-                    hermesReact_1.React.createElement("strong", null, "Alertas de Guardrail:"),
-                    hermesReact_1.React.createElement("ul", null, prop.guardrail_warnings.map((w, idx) => (hermesReact_1.React.createElement("li", { key: idx }, w)))))),
-                hermesReact_1.React.createElement("div", { className: "ifood-diff-grid" },
-                    hermesReact_1.React.createElement("div", null,
-                        hermesReact_1.React.createElement("h4", null, "Estado Atual / Anterior"),
-                        hermesReact_1.React.createElement("pre", { className: "ifood-pre" }, JSON.stringify(prop.current, null, 2))),
-                    hermesReact_1.React.createElement("div", null,
-                        hermesReact_1.React.createElement("h4", null, "Proposta da Planilha (Source of Truth)"),
-                        hermesReact_1.React.createElement("pre", { className: "ifood-pre" }, JSON.stringify(prop.proposed, null, 2)))),
-                isActionable && (hermesReact_1.React.createElement("div", { className: "ifood-row-actions" },
-                    !hasWarnings ? (hermesReact_1.React.createElement("button", { type: "button", className: "ifood-btn-primary", disabled: busy, onClick: () => void handleConfirmProposal(prop.proposal_id, false) }, "Confirmar e Aplicar")) : (hermesReact_1.React.createElement("button", { type: "button", className: "ifood-btn-danger", disabled: busy, onClick: () => void handleConfirmProposal(prop.proposal_id, true) }, "Confirmar mesmo com Guardrail")),
-                    hermesReact_1.React.createElement("button", { type: "button", className: "ifood-btn-secondary", disabled: busy, onClick: () => void handleRejectProposal(prop.proposal_id) }, "Rejeitar"))),
-                isUncertain && (hermesReact_1.React.createElement("div", { className: "ifood-guardrail-box" },
-                    hermesReact_1.React.createElement("strong", null, "Resultado incerto."),
-                    " A escrita n\u00E3o ser\u00E1 repetida automaticamente. Reconcilie o estado atual da loja antes de criar outra proposta.",
-                    hermesReact_1.React.createElement("div", { className: "ifood-row-actions" },
-                        hermesReact_1.React.createElement("button", { type: "button", className: "ifood-btn-secondary", disabled: busy, onClick: () => void handleReconcileProposal(prop.proposal_id) }, "Consultar e reconciliar"))))));
-        })))),
-        tab === 'stores' && (hermesReact_1.React.createElement("section", { className: "ifood-stack" }, snapshots.length === 0 ? (hermesReact_1.React.createElement("div", { className: "ifood-card" },
-            hermesReact_1.React.createElement("p", { className: "ifood-muted" }, "Nenhum snapshot aplicado registrado ainda."))) : (snapshots.map((snap) => (hermesReact_1.React.createElement("article", { key: `${snap.store_key}-${snap.domain}`, className: "ifood-card" },
+                hermesReact_1.React.createElement("strong", null, uncertain.length),
+                hermesReact_1.React.createElement("small", null, "exigem reconcilia\u00E7\u00E3o")),
+            hermesReact_1.React.createElement("div", { className: "ifood-summary-card" },
+                hermesReact_1.React.createElement("span", null, "Lojas monitoradas"),
+                hermesReact_1.React.createElement("strong", null, tenants.length || 1),
+                hermesReact_1.React.createElement("small", null,
+                    snaps.length,
+                    " estados registrados"))),
+        loading ? hermesReact_1.React.createElement("p", { className: "ifood-banner is-info" }, "Carregando painel de sincroniza\u00E7\u00E3o\u2026") : null,
+        error ? hermesReact_1.React.createElement("p", { role: "alert", className: "ifood-banner is-error" }, error) : null,
+        notice ? hermesReact_1.React.createElement("p", { role: "status", className: "ifood-banner is-success" }, notice) : null,
+        hermesReact_1.React.createElement("nav", { className: "ifood-tabs" }, [
+            ['overview', 'Visão geral'],
+            ['changes', `Mudanças (${pending.length + applied.length})`],
+            ['audit', 'Auditoria'],
+            ['sheet', 'Planilha'],
+        ].map(([id, label]) => (hermesReact_1.React.createElement("button", { key: id, type: "button", className: tab === id ? 'ifood-tab is-active' : 'ifood-tab', onClick: () => setTab(id) }, label)))),
+        tab === 'overview' && ready ? (hermesReact_1.React.createElement("section", { className: "ifood-stack" },
+            hermesReact_1.React.createElement("div", { className: "ifood-card" },
+                hermesReact_1.React.createElement("h2", null, "Prontid\u00E3o das integra\u00E7\u00F5es"),
+                hermesReact_1.React.createElement("ul", { className: "ifood-schema-list" },
+                    hermesReact_1.React.createElement("li", null,
+                        "Plugin: ",
+                        hermesReact_1.React.createElement("strong", null, ready.enabled ? 'habilitado' : 'desligado')),
+                    hermesReact_1.React.createElement("li", null,
+                        "Google Sheets API: ",
+                        hermesReact_1.React.createElement("strong", null, ready.sheets_api_configured ? 'configurado' : 'pendente')),
+                    hermesReact_1.React.createElement("li", null,
+                        "Planilha da loja: ",
+                        hermesReact_1.React.createElement("strong", null, ready.sheets_spreadsheet_id ? 'informada' : 'não informada')),
+                    hermesReact_1.React.createElement("li", null,
+                        "Webhook HMAC: ",
+                        hermesReact_1.React.createElement("strong", null, ready.webhook_configured ? 'configurado' : 'pendente')),
+                    hermesReact_1.React.createElement("li", null,
+                        "Poller: ",
+                        hermesReact_1.React.createElement("strong", null, ready.sheets_poller_enabled ? 'ativo' : `desligado (${ready.sheets_poller_runtime?.state || '—'})`)),
+                    hermesReact_1.React.createElement("li", null,
+                        "iFood API: ",
+                        hermesReact_1.React.createElement("strong", null, ready.ifood_api_configured ? 'configurado' : 'pendente')),
+                    hermesReact_1.React.createElement("li", null,
+                        "Playwright (portais): ",
+                        hermesReact_1.React.createElement("strong", null, ready.playwright_configured ? 'configurado' : 'pendente')))),
+            hermesReact_1.React.createElement("div", { className: "ifood-card" },
+                hermesReact_1.React.createElement("h2", null, "Pol\u00EDtica de escrita"),
+                hermesReact_1.React.createElement("ul", { className: "ifood-schema-list" },
+                    hermesReact_1.React.createElement("li", null,
+                        "Modo: ",
+                        hermesReact_1.React.createElement("strong", null, policy)),
+                    hermesReact_1.React.createElement("li", null,
+                        "Backend preferido: ",
+                        hermesReact_1.React.createElement("strong", null, ready.default_execution_mode)),
+                    hermesReact_1.React.createElement("li", null,
+                        "Capacidades liberadas: ",
+                        hermesReact_1.React.createElement("strong", null, caps.length ? caps.join(', ') : 'todas bloqueadas')),
+                    hermesReact_1.React.createElement("li", null,
+                        "Limite de varia\u00E7\u00E3o de pre\u00E7o: ",
+                        hermesReact_1.React.createElement("strong", null,
+                            ready.max_price_change_pct,
+                            "%")))),
+            hermesReact_1.React.createElement("div", { className: "ifood-card" },
+                hermesReact_1.React.createElement("h2", null, "Sess\u00F5es dos portais"),
+                hermesReact_1.React.createElement("div", { className: "ifood-readiness-bar" }, ['IFOOD', '99FOOD', 'ANOTA_AI'].map((ch) => {
+                    const s = sessions[ch] || {};
+                    const st = s.state || 'não configurado';
+                    return hermesReact_1.React.createElement("div", { key: ch, className: badge(st) },
+                        CHANNEL[ch],
+                        ": ",
+                        st,
+                        s.last_error ? ` · ${s.last_error}` : '');
+                }))))) : null,
+        tab === 'changes' ? (hermesReact_1.React.createElement("section", { className: "ifood-stack" }, proposals.length === 0 ? (hermesReact_1.React.createElement("div", { className: "ifood-card" },
+            hermesReact_1.React.createElement("p", { className: "ifood-muted" }, "Nenhuma mudan\u00E7a registrada. Editar a planilha cria a mudan\u00E7a; ela aparece aqui aplicada ou com o motivo do bloqueio."))) : (proposals.map((p) => (hermesReact_1.React.createElement("article", { className: "ifood-card", key: p.proposal_id },
             hermesReact_1.React.createElement("div", { className: "ifood-card-top" },
                 hermesReact_1.React.createElement("div", null,
                     hermesReact_1.React.createElement("h3", null,
-                        snap.store_key,
+                        DOMAIN[p.domain] || p.domain,
                         " \u00B7 ",
-                        snap.domain),
+                        p.store_key),
                     hermesReact_1.React.createElement("span", { className: "ifood-meta" },
-                        "Executor: ",
-                        snap.last_backend,
-                        " \u00B7 Atualizado: ",
-                        snap.updated_at)),
-                hermesReact_1.React.createElement("span", { className: badgeClass(snap.last_outcome) }, snap.last_outcome)),
-            hermesReact_1.React.createElement("pre", { className: "ifood-pre" }, JSON.stringify(snap.last_state, null, 2)))))))),
-        tab === 'setup' && (hermesReact_1.React.createElement("section", { className: "ifood-stack" },
+                        CHANNEL[p.channel] || p.channel,
+                        " \u00B7 autor ",
+                        hermesReact_1.React.createElement("strong", null, p.actor_id),
+                        " \u00B7 ",
+                        when(p.created_at),
+                        " \u00B7 backend ",
+                        p.backend_planned)),
+                hermesReact_1.React.createElement("span", { className: badge(p.status) }, STATUS[p.status] || p.status)),
+            hermesReact_1.React.createElement("ul", { className: "ifood-schema-list" }, changeLines(p).map((l, i) => hermesReact_1.React.createElement("li", { key: i }, l))),
+            (p.guardrail_warnings || []).length ? (hermesReact_1.React.createElement("div", { className: "ifood-guardrail-box" },
+                "Avisos: ",
+                p.guardrail_warnings.join(' | '))) : null,
+            hermesReact_1.React.createElement("div", { className: "ifood-row-actions" },
+                p.status === 'UNCERTAIN' ? (hermesReact_1.React.createElement("button", { type: "button", className: "ifood-btn-secondary", disabled: busy === `rec-${p.proposal_id}`, onClick: () => void act(`rec-${p.proposal_id}`, async () => { const r = await (0, api_1.reconcileSyncProposal)(p.proposal_id, tenant); setNotice(`Reconciliação: ${r.outcome}`); await load(tenant); }) }, "Reconciliar")) : null,
+                p.status === 'PENDING' || p.status === 'BLOCKED' ? (hermesReact_1.React.createElement("button", { type: "button", className: "ifood-btn-danger", disabled: busy === `rj-${p.proposal_id}`, onClick: () => void act(`rj-${p.proposal_id}`, async () => { await (0, api_1.rejectSyncProposal)(p.proposal_id, 'descartada pelo operador', tenant); setNotice('Mudança descartada.'); await load(tenant); }) }, "Descartar")) : null,
+                hermesReact_1.React.createElement("span", { className: "ifood-meta" }, p.proposal_id)))))))) : null,
+        tab === 'audit' ? (hermesReact_1.React.createElement("section", { className: "ifood-card" }, events.length === 0 ? hermesReact_1.React.createElement("p", { className: "ifood-muted" }, "Nenhum evento de auditoria registrado.") : (hermesReact_1.React.createElement("div", { className: "ifood-table-wrap" },
+            hermesReact_1.React.createElement("table", { className: "ifood-table" },
+                hermesReact_1.React.createElement("thead", null,
+                    hermesReact_1.React.createElement("tr", null,
+                        hermesReact_1.React.createElement("th", null, "Quando"),
+                        hermesReact_1.React.createElement("th", null, "Loja"),
+                        hermesReact_1.React.createElement("th", null, "Dom\u00EDnio"),
+                        hermesReact_1.React.createElement("th", null, "Backend"),
+                        hermesReact_1.React.createElement("th", null, "Resultado"),
+                        hermesReact_1.React.createElement("th", null, "Resumo"))),
+                hermesReact_1.React.createElement("tbody", null, events.map((ev) => (hermesReact_1.React.createElement("tr", { key: ev.id },
+                    hermesReact_1.React.createElement("td", null, when(ev.timestamp_utc)),
+                    hermesReact_1.React.createElement("td", null, ev.store_key),
+                    hermesReact_1.React.createElement("td", null, DOMAIN[ev.domain] || ev.domain),
+                    hermesReact_1.React.createElement("td", null, ev.backend_used),
+                    hermesReact_1.React.createElement("td", null,
+                        hermesReact_1.React.createElement("span", { className: badge(ev.outcome) }, ev.outcome)),
+                    hermesReact_1.React.createElement("td", null, ev.summary)))))))))) : null,
+        tab === 'sheet' ? (hermesReact_1.React.createElement("section", { className: "ifood-stack" },
             hermesReact_1.React.createElement("div", { className: "ifood-card" },
-                hermesReact_1.React.createElement("h2", null, "Modelo das 4 Abas na Planilha Google Sheets"),
-                hermesReact_1.React.createElement("ul", { className: "ifood-schema-list" },
-                    hermesReact_1.React.createElement("li", null,
-                        hermesReact_1.React.createElement("strong", null, "Lojas:"),
-                        ' ',
-                        hermesReact_1.React.createElement("code", null, "store_key, channel (ANOTA_AI|IFOOD|99FOOD), merchant_id, store_name, execution_mode (DISABLED|API_FIRST|API_ONLY|PLAYWRIGHT_ONLY), sync_mode (REVIEW; AUTO_APPLY ignorado), portal_url, enabled, prep_time_minutes, status_action (OPEN|PAUSE), pause_reason, pause_start_iso, pause_end_iso")),
-                    hermesReact_1.React.createElement("li", null,
-                        hermesReact_1.React.createElement("strong", null, "Horarios:"),
-                        ' ',
-                        hermesReact_1.React.createElement("code", null, "store_key, day_of_week, start_time, end_time, duration_minutes, enabled")),
-                    hermesReact_1.React.createElement("li", null,
-                        hermesReact_1.React.createElement("strong", null, "Cardapio:"),
-                        ' ',
-                        hermesReact_1.React.createElement("code", null, "store_key, item_id, item_name, description, price_brl, original_price_brl, available")),
-                    hermesReact_1.React.createElement("li", null,
-                        hermesReact_1.React.createElement("strong", null, "Auditoria_Sync:"),
-                        " preenchida automaticamente com timestamp, loja, dom\u00EDnio, executor e resultado.")),
-                hermesReact_1.React.createElement("h3", null, "Google Apps Script (Webhook HMAC em tempo real)"),
-                hermesReact_1.React.createElement("pre", { className: "ifood-pre" }, appsScript || 'Carregando apps_script/Code.gs…')),
+                hermesReact_1.React.createElement("h2", null, "Sincronizar a planilha"),
+                hermesReact_1.React.createElement("p", { className: "ifood-muted" }, "L\u00EA a planilha (fonte da verdade), compara com o estado da loja e aplica quando a pol\u00EDtica \u00E9 AUTO_APPLY e a capacidade est\u00E1 liberada. Sem capacidade, fica registrado com o motivo."),
+                hermesReact_1.React.createElement("div", { className: "ifood-row-actions" },
+                    hermesReact_1.React.createElement("button", { type: "button", className: "ifood-btn-secondary", onClick: () => setDryRun((v) => !v) },
+                        "Modo: ",
+                        dryRun ? 'simulação' : 'aplicar'),
+                    hermesReact_1.React.createElement("button", { type: "button", className: "ifood-btn-primary", disabled: busy === 'sync', onClick: () => void sync() }, busy === 'sync' ? 'Sincronizando…' : 'Sincronizar agora'))),
             hermesReact_1.React.createElement("div", { className: "ifood-card" },
-                hermesReact_1.React.createElement("h2", null, "Auditoria Recente"),
-                hermesReact_1.React.createElement("p", { className: "ifood-muted" },
-                    "Runtime do poller: ",
-                    readiness?.sheets_poller_runtime.state || 'não observado',
-                    " \u00B7 Poller: ",
-                    overview?.sheets_poller?.last_success_at
-                        ? `última reconciliação ${new Date(overview.sheets_poller.last_success_at).toLocaleString()}`
-                        : 'nenhuma reconciliação automática registrada',
-                    overview?.sheets_poller?.last_error
-                        ? ` · ${overview.sheets_poller.last_error} (${overview.sheets_poller.consecutive_failures} falhas)`
-                        : ''),
-                auditEvents.length === 0 ? (hermesReact_1.React.createElement("p", { className: "ifood-muted" }, "Nenhum evento de auditoria registrado.")) : (hermesReact_1.React.createElement("div", { className: "ifood-table-wrap" },
-                    hermesReact_1.React.createElement("table", { className: "ifood-table" },
-                        hermesReact_1.React.createElement("thead", null,
-                            hermesReact_1.React.createElement("tr", null,
-                                hermesReact_1.React.createElement("th", null, "Data/Hora UTC"),
-                                hermesReact_1.React.createElement("th", null, "Loja"),
-                                hermesReact_1.React.createElement("th", null, "Dom\u00EDnio"),
-                                hermesReact_1.React.createElement("th", null, "Executor"),
-                                hermesReact_1.React.createElement("th", null, "Resultado"),
-                                hermesReact_1.React.createElement("th", null, "Resumo"))),
-                        hermesReact_1.React.createElement("tbody", null, auditEvents.map((ev) => (hermesReact_1.React.createElement("tr", { key: ev.id },
-                            hermesReact_1.React.createElement("td", null, ev.timestamp_utc),
-                            hermesReact_1.React.createElement("td", null, ev.store_key),
-                            hermesReact_1.React.createElement("td", null, ev.domain),
-                            hermesReact_1.React.createElement("td", null, ev.backend_used),
-                            hermesReact_1.React.createElement("td", null,
-                                hermesReact_1.React.createElement("span", { className: badgeClass(ev.outcome) }, ev.outcome)),
-                            hermesReact_1.React.createElement("td", null, ev.summary)))))))))))));
+                hermesReact_1.React.createElement("h2", null, "Apps Script (webhook assinado)"),
+                hermesReact_1.React.createElement("pre", { className: "ifood-pre" }, appScript || 'Clique em atualizar para carregar apps_script/Code.gs'),
+                hermesReact_1.React.createElement("div", { className: "ifood-row-actions" },
+                    hermesReact_1.React.createElement("button", { type: "button", className: "ifood-btn-secondary", disabled: busy === 'gs', onClick: () => void act('gs', async () => { const r = await (0, api_1.fetchAppsScript)(); setAppScript(r.content || ''); }) }, "Carregar Apps Script"))))) : null));
 }
 
 },

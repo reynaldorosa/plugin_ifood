@@ -1,597 +1,337 @@
 import {
-  confirmSyncProposal,
   fetchAppsScript,
   fetchSyncOverview,
   fetchTenants,
   reconcileSyncProposal,
   rejectSyncProposal,
   SyncOverviewResponse,
+  SyncProposalRecord,
   triggerSheetSync,
 } from './api';
 import { React, useCallback, useEffect, useState } from './hermesReact';
 
-type ActiveTab = 'queue' | 'stores' | 'setup';
+/**
+ * Aba do painel web — MESMO modelo da página nativa do app desktop:
+ * a planilha é o comando; nada de "Confirmar/Aplicar" no caminho principal.
+ * Aprovação humana existe só onde o motor não pode decidir:
+ * resultado incerto (reconciliar) e proposta bloqueada (descartar).
+ */
 
-const EXAMPLE_SNAPSHOT = JSON.stringify(
-  {
-    stores_rows: [
-      {
-        store_key: 'loja-centro',
-        channel: 'IFOOD',
-        merchant_id: '550e8400-e29b-41d4-a716-446655440000',
-        store_name: 'Loja Centro (iFood)',
-        execution_mode: 'API_FIRST',
-        sync_mode: 'REVIEW',
-        enabled: true,
-        prep_time_minutes: 25,
-        status_action: 'OPEN',
-        portal_url: 'https://portal.ifood.com.br',
-      },
-    ],
-    hours_rows: [
-      { store_key: 'loja-centro', day_of_week: 'SEGUNDA', start_time: '09:00', end_time: '18:00' },
-      { store_key: 'loja-centro', day_of_week: 'TERCA', start_time: '09:00', end_time: '18:00' },
-      { store_key: 'loja-centro', day_of_week: 'QUARTA', start_time: '09:00', end_time: '18:00' },
-      { store_key: 'loja-centro', day_of_week: 'QUINTA', start_time: '09:00', end_time: '18:00' },
-      { store_key: 'loja-centro', day_of_week: 'SEXTA', start_time: '09:00', end_time: '18:00' },
-      { store_key: 'loja-centro', day_of_week: 'SABADO', start_time: '09:00', end_time: '18:00' },
-      { store_key: 'loja-centro', day_of_week: 'DOMINGO', start_time: '09:00', end_time: '18:00' },
-    ],
-    catalog_rows: [
-      {
-        store_key: 'loja-centro',
-        item_id: 'combo-01',
-        item_name: 'Combo Clássico',
-        price_brl: '34,90',
-        available: true,
-      },
-    ],
-    dry_run: false,
-  },
-  null,
-  2,
-);
+type Tab = 'overview' | 'changes' | 'audit' | 'sheet';
 
-function badgeClass(value: string): string {
-  const upper = value.toUpperCase();
-  if (upper === 'CONFIRMED' || upper === 'APPLIED' || upper === 'OK') return 'ifood-badge is-ok';
-  if (upper.includes('BLOCKED') || upper.includes('CAPTCHA') || upper === 'ERROR' || upper === 'DIVERGENT') {
-    return 'ifood-badge is-danger';
-  }
-  if (upper.includes('PENDING') || upper.includes('LOGIN') || upper === 'REVIEW') {
-    return 'ifood-badge is-warn';
-  }
+const DOMAIN: Record<string, string> = {
+  OPENING_HOURS: 'Horários',
+  CATALOG: 'Cardápio',
+  STORE_STATUS: 'Status da loja',
+  PREP_TIME: 'Tempo de preparo',
+};
+const CHANNEL: Record<string, string> = { IFOOD: 'iFood', '99FOOD': '99Food', ANOTA_AI: 'Anota AI' };
+const STATUS: Record<string, string> = {
+  PENDING: 'Aguardando revisão',
+  EXECUTING: 'Em execução',
+  EXECUTED: 'Aplicado',
+  APPLIED: 'Aplicado',
+  CONFIRMED: 'Confirmado',
+  UNCERTAIN: 'Resultado incerto',
+  BLOCKED: 'Bloqueado',
+  FAILED: 'Falhou',
+  REJECTED: 'Rejeitado',
+  STALE: 'Expirado',
+  EXPIRED: 'Expirado',
+};
+const WEEKDAY = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+
+function badge(value: string): string {
+  const v = String(value || '').toUpperCase();
+  if (['CONFIRMED', 'APPLIED', 'EXECUTED', 'OK'].includes(v)) return 'ifood-badge is-ok';
+  if (['BLOCKED', 'FAILED', 'DIVERGENT', 'ERROR'].includes(v) || v.includes('CAPTCHA')) return 'ifood-badge is-danger';
+  if (v.includes('PENDING') || v.includes('LOGIN') || v === 'REVIEW' || v === 'UNCERTAIN') return 'ifood-badge is-warn';
   return 'ifood-badge is-neutral';
 }
 
+function when(iso?: string | null): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? String(iso) : d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+function changeLines(p: SyncProposalRecord): string[] {
+  const cur = p.current as any;
+  const pro = p.proposed as any;
+  if (p.domain === 'OPENING_HOURS') {
+    const fmt = (rows: any[]) => (rows || []).map((s: any) => `${WEEKDAY[Number(s.dayOfWeek)] ?? s.dayOfWeek} ${s.start}+${s.duration}min`).join(' · ') || 'sem turnos';
+    return [`antes: ${fmt(cur)}`, `depois: ${fmt(pro)}`];
+  }
+  if (p.domain === 'CATALOG') {
+    const before = new Map<string, any>((cur || []).map((i: any) => [String(i.item_id), i]));
+    const out: string[] = [];
+    for (const item of pro || []) {
+      const old = before.get(String(item.item_id));
+      const bits: string[] = [];
+      if (!old) bits.push('novo no cardápio');
+      if (old && old.price_cents !== item.price_cents) bits.push(`R$ ${(old.price_cents / 100).toFixed(2)} → R$ ${(item.price_cents / 100).toFixed(2)}`);
+      if (old && old.available !== item.available) bits.push(item.available ? 'volta ao cardápio' : 'sai do cardápio');
+      if (bits.length) out.push(`${item.item_name || item.item_id}: ${bits.join(' · ')}`);
+      before.delete(String(item.item_id));
+    }
+    for (const rest of before.values()) out.push(`${rest.item_name || rest.item_id}: fora da proposta`);
+    return out.length ? out : ['sem diferença em relação ao estado atual'];
+  }
+  if (p.domain === 'STORE_STATUS') {
+    const acts: Record<string, string> = { PAUSE: 'pausar a loja', RESUME: 'reabrir a loja', OPEN: 'abrir a loja', CLOSE: 'fechar a loja' };
+    const label = acts[String(pro?.status_action || '').toUpperCase()] || `ação ${pro?.status_action || 'não informada'}`;
+    const bits = [label];
+    if (pro?.pause_reason) bits.push(`motivo: ${pro.pause_reason}`);
+    if (pro?.pause_end_iso) bits.push(`até ${when(pro.pause_end_iso)}`);
+    return [`depois: ${bits.join(' · ')}`];
+  }
+  if (p.domain === 'PREP_TIME') {
+    return [
+      `antes: ${cur?.prep_time_minutes != null ? `${cur.prep_time_minutes} min` : 'não informado'}`,
+      `depois: ${pro?.prep_time_minutes != null ? `${pro.prep_time_minutes} min` : 'não informado'}`,
+    ];
+  }
+  return [JSON.stringify(pro)];
+}
+
 export function IfoodStorePage() {
-  const [tab, setTab] = useState<ActiveTab>('queue');
-  const [overview, setOverview] = useState<SyncOverviewResponse | null>(null);
-  const [tenants, setTenants] = useState<Array<{tenant_key: string; sheet_configured: boolean}>>([]);
-  const [tenantKey, setTenantKey] = useState<string>('');
-  const [appsScript, setAppsScript] = useState<string>('');
-  const [loading, setLoading] = useState<boolean>(true);
-  const [busy, setBusy] = useState<boolean>(false);
-  const [error, setError] = useState<string>('');
-  const [notice, setNotice] = useState<string>('');
-  const [rowErrors, setRowErrors] = useState<Array<Record<string, unknown>>>([]);
-  const [showInlineSync, setShowInlineSync] = useState<boolean>(false);
-  const [inlineJson, setInlineJson] = useState<string>(EXAMPLE_SNAPSHOT);
+  const [tab, setTab] = useState<Tab>('overview');
+  const [ov, setOv] = useState<SyncOverviewResponse | null>(null);
+  const [tenants, setTenants] = useState<Array<{ tenant_key: string; sheet_configured: boolean }>>([]);
+  const [tenant, setTenant] = useState('');
+  const [appScript, setAppScript] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [dryRun, setDryRun] = useState(true);
 
-
-  const loadAll = useCallback(async (targetTenant = tenantKey) => {
-    if (!targetTenant) return;
+  const load = useCallback(async (key: string) => {
+    if (!key) return;
     setLoading(true);
     setError('');
     try {
-      const data = await fetchSyncOverview(targetTenant);
-      setOverview(data);
+      setOv(await fetchSyncOverview(key));
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Falha ao carregar sincronização.');
+      setError(e instanceof Error ? e.message : 'Falha ao carregar a sincronização.');
     } finally {
       setLoading(false);
     }
-  }, [tenantKey]);
-
-  useEffect(() => {
-    void fetchTenants().then(async (items) => {
-      setTenants(items);
-      const first = items[0]?.tenant_key || '';
-      setTenantKey((current) => current || first);
-      if (first) {
-        await loadAll(first);
-      } else {
-        setLoading(false);
-      }
-    }).catch((e) => {
-      setError(e instanceof Error ? e.message : 'Falha ao listar padarias.');
-      setLoading(false);
-    });
   }, []);
 
-  const handleLoadAppsScript = async () => {
-    if (appsScript) return;
-    try {
-      const res = await fetchAppsScript();
-      setAppsScript(res.content || '');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Falha ao obter Apps Script.');
-    }
-  };
+  useEffect(() => {
+    void fetchTenants()
+      .then(async (items) => {
+        setTenants(items);
+        const first = items[0]?.tenant_key || 'default';
+        setTenant(first);
+        await load(first);
+      })
+      .catch((e) => {
+        setError(e instanceof Error ? e.message : 'Falha ao listar as lojas.');
+        setLoading(false);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const handleSyncPull = async () => {
-    setBusy(true);
+  const ready = ov?.readiness;
+  const proposals = ov?.proposals || [];
+  const events = ov?.audit_events || [];
+  const snaps = ov?.snapshots || [];
+  const sessions = ((ov?.portal_sessions || {}) as any)[tenant] || {};
+  const pending = proposals.filter((p) => p.status === 'PENDING' || p.status === 'BLOCKED');
+  const applied = proposals.filter((p) => ['EXECUTED', 'APPLIED', 'CONFIRMED'].includes(p.status));
+  const uncertain = proposals.filter((p) => p.status === 'UNCERTAIN');
+  const policy = ready?.automation_policy || ready?.default_sync_mode || 'REVIEW';
+  const caps = ready?.write_capabilities || [];
+
+  const act = async (key: string, fn: () => Promise<void>) => {
+    setBusy(key);
     setError('');
-    setNotice('');
-    setRowErrors([]);
     try {
-      const res = await triggerSheetSync({tenant_key: tenantKey});
-      setNotice(res.summary);
-      setRowErrors(res.row_errors || []);
-      await loadAll();
+      await fn();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Falha ao sincronizar com Google Sheets.');
+      setError(e instanceof Error ? e.message : 'Falha na operação.');
     } finally {
-      setBusy(false);
+      setBusy('');
     }
   };
 
-  const handleInlineSync = async () => {
-    setBusy(true);
-    setError('');
-    setNotice('');
-    setRowErrors([]);
-    try {
-      const parsed = JSON.parse(inlineJson);
-      const res = await triggerSheetSync({...parsed, tenant_key: tenantKey});
-      setNotice(res.summary);
-      setRowErrors(res.row_errors || []);
-      await loadAll();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Snapshot JSON inválido.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleConfirmProposal = async (proposalId: string, overrideGuardrail = false) => {
-    setBusy(true);
-    setError('');
-    setNotice('');
-    try {
-      const res = await confirmSyncProposal(proposalId, tenantKey, overrideGuardrail);
-      const outcome = String(res.execution.outcome || '');
-      setNotice(`Proposta ${proposalId.slice(0, 8)} executada: ${outcome} — ${String(res.execution.message || '')}`);
-      await loadAll();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Falha ao confirmar proposta.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleRejectProposal = async (proposalId: string) => {
-    setBusy(true);
-    setError('');
-    setNotice('');
-    try {
-      await rejectSyncProposal(proposalId, 'Rejeitado manualmente no Dashboard Hermes', tenantKey);
-      setNotice(`Proposta ${proposalId.slice(0, 8)} rejeitada.`);
-      await loadAll();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Falha ao rejeitar proposta.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleReconcileProposal = async (proposalId: string) => {
-    setBusy(true);
-    setError('');
-    setNotice('');
-    try {
-      const result = await reconcileSyncProposal(proposalId, tenantKey);
-      setNotice(`Reconciliação somente leitura: ${result.outcome}.`);
-      await loadAll();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Falha na reconciliação.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const proposals = overview?.proposals || [];
-  const activeProposals = proposals.filter(
-    (p) => p.status === 'PENDING' || p.status === 'BLOCKED',
-  );
-  const snapshots = overview?.snapshots || [];
-  const auditEvents = overview?.audit_events || [];
-  const readiness = overview?.readiness;
+  const sync = () =>
+    act('sync', async () => {
+      const out = await triggerSheetSync({ tenant_key: tenant, dry_run: dryRun });
+      setNotice(`${dryRun ? 'Simulação' : 'Sincronização'}: ${out.summary || 'concluída'}`);
+      await load(tenant);
+    });
 
   return (
     <main className="ifood-sync-root">
       <header className="ifood-header">
         <div>
           <span className="ifood-eyebrow">HERMES / OPERAÇÃO DE LOJAS</span>
-          <h1>Central de sincronização</h1>
+          <h1>Loja iFood / Sheets</h1>
           <p className="ifood-subtitle">
-            Propostas auditadas para revisão. Escritas permanecem bloqueadas até validação de cada
-            capacidade, merchant e executor.
+            A planilha é o comando. A divergência é aplicada e registrada com autor — o Telegram avisa,
+            não autoriza.
           </p>
         </div>
         <div className="ifood-header-actions">
-          <button
-            type="button"
-            className="ifood-btn-primary"
-            disabled={busy || loading}
-            onClick={() => void handleSyncPull()}
-          >
-            {busy ? 'Sincronizando…' : 'Sincronizar Planilha Agora'}
-          </button>
-          <button
-            type="button"
-            className="ifood-btn-secondary"
-            disabled={busy}
-            onClick={() => setShowInlineSync((prev) => !prev)}
-          >
-            {showInlineSync ? 'Ocultar Snapshot JSON' : 'Simular / Enviar Snapshot'}
-          </button>
+          {tenants.length > 1 ? (
+            <select aria-label="Selecionar loja" value={tenant} onChange={(e) => { setTenant(e.target.value); setOv(null); void load(e.target.value); }}>
+              {tenants.map((t) => <option key={t.tenant_key} value={t.tenant_key}>{t.tenant_key}</option>)}
+            </select>
+          ) : (
+            <span className="ifood-pill is-neutral">{tenant || 'default'}</span>
+          )}
+          <span className={policy === 'AUTO_APPLY' ? 'ifood-badge is-ok' : 'ifood-badge is-warn'}>
+            {policy === 'AUTO_APPLY' ? 'AUTO_APPLY · a planilha aplica' : 'REVIEW · revisão ativa'}
+          </span>
+          <button type="button" className="ifood-btn-secondary" disabled={loading} onClick={() => void load(tenant)}>Atualizar</button>
         </div>
       </header>
 
-      <section className="ifood-card" aria-label="Padaria selecionada">
-        <label htmlFor="ifood-tenant-select">Padaria</label>
-        <select id="ifood-tenant-select" aria-label="Selecionar padaria" value={tenantKey}
-          onChange={(e) => {
-            const next = e.target.value;
-            setOverview(null);
-            setTenantKey(next);
-            void loadAll(next);
-          }}>
-          {tenants.map((tenant) => <option key={tenant.tenant_key} value={tenant.tenant_key}>{tenant.tenant_key}</option>)}
-        </select>
+      <section className="ifood-summary-grid">
+        <div className="ifood-summary-card"><span>Aguardando revisão</span><strong>{pending.length}</strong><small>bloqueadas por guardrail ou capacidade</small></div>
+        <div className="ifood-summary-card"><span>Aplicadas</span><strong>{applied.length}</strong><small>mudanças que chegaram ao canal</small></div>
+        <div className="ifood-summary-card"><span>Resultado incerto</span><strong>{uncertain.length}</strong><small>exigem reconciliação</small></div>
+        <div className="ifood-summary-card"><span>Lojas monitoradas</span><strong>{tenants.length || 1}</strong><small>{snaps.length} estados registrados</small></div>
       </section>
 
-      <section className="ifood-summary-grid" aria-label="Resumo da operação">
-        <div className="ifood-summary-card"><span>Para revisar</span><strong>{activeProposals.length}</strong><small>propostas aguardando decisão</small></div>
-        <div className="ifood-summary-card"><span>Estados registrados</span><strong>{snapshots.length}</strong><small>domínios com histórico</small></div>
-        <div className="ifood-summary-card"><span>Resultado incerto</span><strong>{proposals.filter((p) => p.status === 'UNCERTAIN').length}</strong><small>exigem reconciliação</small></div>
-      </section>
+      {loading ? <p className="ifood-banner is-info">Carregando painel de sincronização…</p> : null}
+      {error ? <p role="alert" className="ifood-banner is-error">{error}</p> : null}
+      {notice ? <p role="status" className="ifood-banner is-success">{notice}</p> : null}
 
-      {readiness && (
-        <section className="ifood-integrations" aria-label="Status das integrações">
-          <div className="ifood-section-heading"><span>Integrações</span><small>Configuração e capacidade de execução</small></div>
-          <div className="ifood-readiness-bar">
-          <div className={readiness.sheets_api_configured ? 'ifood-pill is-ready' : 'ifood-pill'}>
-            Google Sheets API: {readiness.sheets_api_configured ? 'Configurada' : 'Pendente'}
-          </div>
-          <div className={readiness.webhook_configured ? 'ifood-pill is-ready' : 'ifood-pill'}>
-            Webhook HMAC: {readiness.webhook_configured ? 'Ativo' : 'Pendente'}
-          </div>
-          <div className={readiness.sheets_poller_enabled ? 'ifood-pill is-ready' : 'ifood-pill'}>
-            Poller Google Sheets: {readiness.sheets_poller_enabled ? 'Ativo' : 'Desativado'}
-          </div>
-          <div className={readiness.ifood_api_configured ? 'ifood-pill is-ready' : 'ifood-pill'}>
-            iFood API: {readiness.ifood_api_configured ? 'Credencial configurada; escritas exigem contrato validado' : 'Sem credencial'}
-          </div>
-          <div className={readiness.playwright_configured ? 'ifood-pill is-ready' : 'ifood-pill'}>
-            Playwright: {readiness.playwright_configured ? `Configurado; domínios validados: ${readiness.validated_portal_domains.join(', ') || 'nenhum'}` : 'Não configurado'}
-          </div>
-          <div className="ifood-pill is-neutral">
-            Política: REVIEW · Capacidades de escrita: {readiness.write_capabilities.join(', ') || 'todas bloqueadas'}
-          </div>
-          <div className="ifood-pill is-neutral">
-            Poller runtime: {readiness.sheets_poller_runtime.state}
-            {readiness.sheets_poller_runtime.detail ? ` · ${readiness.sheets_poller_runtime.detail}` : ''}
-          </div>
-          </div>
-        </section>
-      )}
-
-      {overview?.portal_sessions?.[tenantKey] && (
-        <section className="ifood-card" aria-label="Sessões dos portais">
-          <h2>Sessões dos portais</h2>
-          <div className="ifood-readiness-bar">
-            {Object.entries(overview.portal_sessions[tenantKey]).map(([channel, session]) => (
-              <div key={channel} className={badgeClass(session.state)}>
-                {channel}: {session.state}{session.last_error ? ` · ${session.last_error}` : ''}
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {loading && <p className="ifood-banner is-info">Carregando painel de sincronização…</p>}
-      {error && (
-        <p role="alert" className="ifood-banner is-error">
-          {error}
-        </p>
-      )}
-      {notice && (
-        <p role="status" className="ifood-banner is-success">
-          {notice}
-        </p>
-      )}
-      {rowErrors.length > 0 && (
-        <section className="ifood-card" aria-label="Erros de validação da planilha">
-          <h2>Sincronização bloqueada por erros de linha</h2>
-          <ul>
-            {rowErrors.map((item, index) => (
-              <li key={index}>
-                {String(item.sheet || 'Aba desconhecida')} · linha {String(item.row || '?')}: {String(item.message || 'Erro de validação')}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {showInlineSync && (
-        <section className="ifood-card">
-          <h2>Testar / Enviar Snapshot de Planilha (JSON)</h2>
-          <p className="ifood-muted">
-            Snapshot sintético para validar parser, regras de diff e bloqueios. Nenhum portal real
-            é acessado por este modo.
-          </p>
-          <textarea
-            aria-label="Snapshot JSON"
-            rows={10}
-            className="ifood-textarea"
-            value={inlineJson}
-            onChange={(e) => setInlineJson(e.target.value)}
-          />
-          <div className="ifood-row-actions">
-            <button
-              type="button"
-              className="ifood-btn-primary"
-              disabled={busy}
-              onClick={() => void handleInlineSync()}
-            >
-              Processar Snapshot
-            </button>
-          </div>
-        </section>
-      )}
-
-      <nav className="ifood-tabs" aria-label="Navegação do plugin">
-        <button
-          type="button"
-          className={tab === 'queue' ? 'ifood-tab is-active' : 'ifood-tab'}
-          onClick={() => setTab('queue')}
-        >
-          Fila de Mudanças ({activeProposals.length})
-        </button>
-        <button
-          type="button"
-          className={tab === 'stores' ? 'ifood-tab is-active' : 'ifood-tab'}
-          onClick={() => setTab('stores')}
-        >
-          Lojas Sincronizadas ({snapshots.length})
-        </button>
-        <button
-          type="button"
-          className={tab === 'setup' ? 'ifood-tab is-active' : 'ifood-tab'}
-          onClick={() => {
-            setTab('setup');
-            void handleLoadAppsScript();
-          }}
-        >
-          Google Sheets & Auditoria
-        </button>
+      <nav className="ifood-tabs">
+        {([
+          ['overview', 'Visão geral'],
+          ['changes', `Mudanças (${pending.length + applied.length})`],
+          ['audit', 'Auditoria'],
+          ['sheet', 'Planilha'],
+        ] as Array<[Tab, string]>).map(([id, label]) => (
+          <button key={id} type="button" className={tab === id ? 'ifood-tab is-active' : 'ifood-tab'} onClick={() => setTab(id)}>{label}</button>
+        ))}
       </nav>
 
-      <div className="ifood-content-heading">
-        <div><span className="ifood-eyebrow">VISÃO ATUAL</span><h2>{tab === 'queue' ? 'Fila de mudanças' : tab === 'stores' ? 'Estados sincronizados' : 'Planilha e auditoria'}</h2></div>
-        <span className="ifood-muted">{tab === 'queue' ? `${proposals.length} registros` : tab === 'stores' ? `${snapshots.length} registros` : `${auditEvents.length} eventos recentes`}</span>
-      </div>
+      {tab === 'overview' && ready ? (
+        <section className="ifood-stack">
+          <div className="ifood-card">
+            <h2>Prontidão das integrações</h2>
+            <ul className="ifood-schema-list">
+              <li>Plugin: <strong>{ready.enabled ? 'habilitado' : 'desligado'}</strong></li>
+              <li>Google Sheets API: <strong>{ready.sheets_api_configured ? 'configurado' : 'pendente'}</strong></li>
+              <li>Planilha da loja: <strong>{ready.sheets_spreadsheet_id ? 'informada' : 'não informada'}</strong></li>
+              <li>Webhook HMAC: <strong>{ready.webhook_configured ? 'configurado' : 'pendente'}</strong></li>
+              <li>Poller: <strong>{ready.sheets_poller_enabled ? 'ativo' : `desligado (${(ready.sheets_poller_runtime as any)?.state || '—'})`}</strong></li>
+              <li>iFood API: <strong>{ready.ifood_api_configured ? 'configurado' : 'pendente'}</strong></li>
+              <li>Playwright (portais): <strong>{ready.playwright_configured ? 'configurado' : 'pendente'}</strong></li>
+            </ul>
+          </div>
+          <div className="ifood-card">
+            <h2>Política de escrita</h2>
+            <ul className="ifood-schema-list">
+              <li>Modo: <strong>{policy}</strong></li>
+              <li>Backend preferido: <strong>{ready.default_execution_mode}</strong></li>
+              <li>Capacidades liberadas: <strong>{caps.length ? caps.join(', ') : 'todas bloqueadas'}</strong></li>
+              <li>Limite de variação de preço: <strong>{ready.max_price_change_pct}%</strong></li>
+            </ul>
+          </div>
+          <div className="ifood-card">
+            <h2>Sessões dos portais</h2>
+            <div className="ifood-readiness-bar">
+              {['IFOOD', '99FOOD', 'ANOTA_AI'].map((ch) => {
+                const s = sessions[ch] || {};
+                const st = s.state || 'não configurado';
+                return <div key={ch} className={badge(st)}>{CHANNEL[ch]}: {st}{s.last_error ? ` · ${s.last_error}` : ''}</div>;
+              })}
+            </div>
+          </div>
+        </section>
+      ) : null}
 
-      {tab === 'queue' && (
+      {tab === 'changes' ? (
         <section className="ifood-stack">
           {proposals.length === 0 ? (
-            <div className="ifood-card">
-              <p className="ifood-muted">
-                Nenhuma mudança pendente da planilha. Edite sua planilha Google Sheets ou clique em
-                <strong> Sincronizar Planilha Agora</strong>.
-              </p>
-            </div>
+            <div className="ifood-card"><p className="ifood-muted">Nenhuma mudança registrada. Editar a planilha cria a mudança; ela aparece aqui aplicada ou com o motivo do bloqueio.</p></div>
           ) : (
-            proposals.map((prop) => {
-              const isActionable = prop.status === 'PENDING' || prop.status === 'BLOCKED';
-              const isUncertain = prop.status === 'UNCERTAIN';
-              const hasWarnings = prop.guardrail_warnings.length > 0;
-              return (
-                <article key={prop.proposal_id} className="ifood-card">
-                  <div className="ifood-card-top">
-                    <div>
-                      <h3>
-                        {prop.store_key} · {prop.domain}
-                      </h3>
-                      <span className="ifood-meta">
-                      Canal: {prop.channel} · Merchant: {prop.merchant_id || 'não identificado'} · Origem: {prop.trigger_source} · Executor:{' '}
-                        <strong>{prop.backend_planned}</strong>
-                      <br />Versão: {String(prop.metadata.source_version || '—')} · Expira: {new Date(prop.expires_at).toLocaleString()}
-                      </span>
-                    </div>
-                    <span className={badgeClass(prop.status)}>{prop.status}</span>
-                  </div>
-
-                  {hasWarnings && (
-                    <div className="ifood-guardrail-box">
-                      <strong>Alertas de Guardrail:</strong>
-                      <ul>
-                        {prop.guardrail_warnings.map((w, idx) => (
-                          <li key={idx}>{w}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  <div className="ifood-diff-grid">
-                    <div>
-                      <h4>Estado Atual / Anterior</h4>
-                      <pre className="ifood-pre">{JSON.stringify(prop.current, null, 2)}</pre>
-                    </div>
-                    <div>
-                      <h4>Proposta da Planilha (Source of Truth)</h4>
-                      <pre className="ifood-pre">{JSON.stringify(prop.proposed, null, 2)}</pre>
-                    </div>
-                  </div>
-
-                  {isActionable && (
-                    <div className="ifood-row-actions">
-                      {!hasWarnings ? (
-                        <button
-                          type="button"
-                          className="ifood-btn-primary"
-                          disabled={busy}
-                          onClick={() => void handleConfirmProposal(prop.proposal_id, false)}
-                        >
-                          Confirmar e Aplicar
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          className="ifood-btn-danger"
-                          disabled={busy}
-                          onClick={() => void handleConfirmProposal(prop.proposal_id, true)}
-                        >
-                          Confirmar mesmo com Guardrail
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        className="ifood-btn-secondary"
-                        disabled={busy}
-                        onClick={() => void handleRejectProposal(prop.proposal_id)}
-                      >
-                        Rejeitar
-                      </button>
-                    </div>
-                  )}
-                  {isUncertain && (
-                    <div className="ifood-guardrail-box">
-                      <strong>Resultado incerto.</strong> A escrita não será repetida automaticamente.
-                      Reconcilie o estado atual da loja antes de criar outra proposta.
-                      <div className="ifood-row-actions">
-                        <button type="button" className="ifood-btn-secondary" disabled={busy}
-                          onClick={() => void handleReconcileProposal(prop.proposal_id)}>
-                          Consultar e reconciliar
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </article>
-              );
-            })
-          )}
-        </section>
-      )}
-
-      {tab === 'stores' && (
-        <section className="ifood-stack">
-          {snapshots.length === 0 ? (
-            <div className="ifood-card">
-              <p className="ifood-muted">Nenhum snapshot aplicado registrado ainda.</p>
-            </div>
-          ) : (
-            snapshots.map((snap) => (
-              <article key={`${snap.store_key}-${snap.domain}`} className="ifood-card">
+            proposals.map((p) => (
+              <article className="ifood-card" key={p.proposal_id}>
                 <div className="ifood-card-top">
                   <div>
-                    <h3>
-                      {snap.store_key} · {snap.domain}
-                    </h3>
-                    <span className="ifood-meta">
-                      Executor: {snap.last_backend} · Atualizado: {snap.updated_at}
-                    </span>
+                    <h3>{DOMAIN[p.domain] || p.domain} · {p.store_key}</h3>
+                    <span className="ifood-meta">{CHANNEL[p.channel] || p.channel} · autor <strong>{p.actor_id}</strong> · {when(p.created_at)} · backend {p.backend_planned}</span>
                   </div>
-                  <span className={badgeClass(snap.last_outcome)}>{snap.last_outcome}</span>
+                  <span className={badge(p.status)}>{STATUS[p.status] || p.status}</span>
                 </div>
-                <pre className="ifood-pre">{JSON.stringify(snap.last_state, null, 2)}</pre>
+                <ul className="ifood-schema-list">{changeLines(p).map((l, i) => <li key={i}>{l}</li>)}</ul>
+                {(p.guardrail_warnings || []).length ? (
+                  <div className="ifood-guardrail-box">Avisos: {p.guardrail_warnings.join(' | ')}</div>
+                ) : null}
+                <div className="ifood-row-actions">
+                  {p.status === 'UNCERTAIN' ? (
+                    <button type="button" className="ifood-btn-secondary" disabled={busy === `rec-${p.proposal_id}`}
+                      onClick={() => void act(`rec-${p.proposal_id}`, async () => { const r = await reconcileSyncProposal(p.proposal_id, tenant); setNotice(`Reconciliação: ${r.outcome}`); await load(tenant); })}>
+                      Reconciliar
+                    </button>
+                  ) : null}
+                  {p.status === 'PENDING' || p.status === 'BLOCKED' ? (
+                    <button type="button" className="ifood-btn-danger" disabled={busy === `rj-${p.proposal_id}`}
+                      onClick={() => void act(`rj-${p.proposal_id}`, async () => { await rejectSyncProposal(p.proposal_id, 'descartada pelo operador', tenant); setNotice('Mudança descartada.'); await load(tenant); })}>
+                      Descartar
+                    </button>
+                  ) : null}
+                  <span className="ifood-meta">{p.proposal_id}</span>
+                </div>
               </article>
             ))
           )}
         </section>
-      )}
+      ) : null}
 
-      {tab === 'setup' && (
+      {tab === 'audit' ? (
+        <section className="ifood-card">
+          {events.length === 0 ? <p className="ifood-muted">Nenhum evento de auditoria registrado.</p> : (
+            <div className="ifood-table-wrap">
+              <table className="ifood-table">
+                <thead><tr><th>Quando</th><th>Loja</th><th>Domínio</th><th>Backend</th><th>Resultado</th><th>Resumo</th></tr></thead>
+                <tbody>
+                  {events.map((ev) => (
+                    <tr key={ev.id}>
+                      <td>{when(ev.timestamp_utc)}</td><td>{ev.store_key}</td><td>{DOMAIN[ev.domain] || ev.domain}</td>
+                      <td>{ev.backend_used}</td><td><span className={badge(ev.outcome)}>{ev.outcome}</span></td><td>{ev.summary}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      ) : null}
+
+      {tab === 'sheet' ? (
         <section className="ifood-stack">
           <div className="ifood-card">
-            <h2>Modelo das 4 Abas na Planilha Google Sheets</h2>
-            <ul className="ifood-schema-list">
-              <li>
-                <strong>Lojas:</strong>{' '}
-                <code>
-                  store_key, channel (ANOTA_AI|IFOOD|99FOOD), merchant_id, store_name, execution_mode
-                  (DISABLED|API_FIRST|API_ONLY|PLAYWRIGHT_ONLY), sync_mode (REVIEW; AUTO_APPLY ignorado), portal_url,
-                  enabled, prep_time_minutes, status_action (OPEN|PAUSE), pause_reason,
-                  pause_start_iso, pause_end_iso
-                </code>
-              </li>
-              <li>
-                <strong>Horarios:</strong>{' '}
-                <code>store_key, day_of_week, start_time, end_time, duration_minutes, enabled</code>
-              </li>
-              <li>
-                <strong>Cardapio:</strong>{' '}
-                <code>
-                  store_key, item_id, item_name, description, price_brl, original_price_brl,
-                  available
-                </code>
-              </li>
-              <li>
-                <strong>Auditoria_Sync:</strong> preenchida automaticamente com timestamp, loja,
-                domínio, executor e resultado.
-              </li>
-            </ul>
-            <h3>Google Apps Script (Webhook HMAC em tempo real)</h3>
-            <pre className="ifood-pre">{appsScript || 'Carregando apps_script/Code.gs…'}</pre>
-          </div>
-
-          <div className="ifood-card">
-            <h2>Auditoria Recente</h2>
+            <h2>Sincronizar a planilha</h2>
             <p className="ifood-muted">
-              Runtime do poller: {readiness?.sheets_poller_runtime.state || 'não observado'} · Poller: {overview?.sheets_poller?.last_success_at
-                ? `última reconciliação ${new Date(overview.sheets_poller.last_success_at).toLocaleString()}`
-                : 'nenhuma reconciliação automática registrada'}
-              {overview?.sheets_poller?.last_error
-                ? ` · ${overview.sheets_poller.last_error} (${overview.sheets_poller.consecutive_failures} falhas)`
-                : ''}
+              Lê a planilha (fonte da verdade), compara com o estado da loja e aplica quando a política é
+              AUTO_APPLY e a capacidade está liberada. Sem capacidade, fica registrado com o motivo.
             </p>
-            {auditEvents.length === 0 ? (
-              <p className="ifood-muted">Nenhum evento de auditoria registrado.</p>
-            ) : (
-              <div className="ifood-table-wrap">
-                <table className="ifood-table">
-                  <thead>
-                    <tr>
-                      <th>Data/Hora UTC</th>
-                      <th>Loja</th>
-                      <th>Domínio</th>
-                      <th>Executor</th>
-                      <th>Resultado</th>
-                      <th>Resumo</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {auditEvents.map((ev) => (
-                      <tr key={ev.id}>
-                        <td>{ev.timestamp_utc}</td>
-                        <td>{ev.store_key}</td>
-                        <td>{ev.domain}</td>
-                        <td>{ev.backend_used}</td>
-                        <td>
-                          <span className={badgeClass(ev.outcome)}>{ev.outcome}</span>
-                        </td>
-                        <td>{ev.summary}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            <div className="ifood-row-actions">
+              <button type="button" className="ifood-btn-secondary" onClick={() => setDryRun((v) => !v)}>Modo: {dryRun ? 'simulação' : 'aplicar'}</button>
+              <button type="button" className="ifood-btn-primary" disabled={busy === 'sync'} onClick={() => void sync()}>{busy === 'sync' ? 'Sincronizando…' : 'Sincronizar agora'}</button>
+            </div>
+          </div>
+          <div className="ifood-card">
+            <h2>Apps Script (webhook assinado)</h2>
+            <pre className="ifood-pre">{appScript || 'Clique em atualizar para carregar apps_script/Code.gs'}</pre>
+            <div className="ifood-row-actions">
+              <button type="button" className="ifood-btn-secondary" disabled={busy === 'gs'}
+                onClick={() => void act('gs', async () => { const r = await fetchAppsScript(); setAppScript(r.content || ''); })}>
+                Carregar Apps Script
+              </button>
+            </div>
           </div>
         </section>
-      )}
+      ) : null}
     </main>
   );
 }
