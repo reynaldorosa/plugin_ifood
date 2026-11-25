@@ -1,0 +1,15 @@
+{
+  "name": "ifood-loja",
+  "label": "Loja iFood / Sheets",
+  "description": "Google Sheets como fonte da verdade para horários, cardápio, status e preparo (API oficial + Playwright fallback)",
+  "icon": "Store",
+  "version": "0.2.0",
+  "enabled_by_default": false,
+  "tab": {
+    "path": "/ifood-loja",
+    "position": "end"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}

@@ -1,0 +1,361 @@
+.ifood-sync-root {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 20px 16px 40px;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #e5e7eb;
+  box-sizing: border-box;
+}
+
+.ifood-sync-root *,
+.ifood-sync-root *::before,
+.ifood-sync-root *::after {
+  box-sizing: border-box;
+}
+
+.ifood-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.ifood-eyebrow {
+  display: inline-block;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #f59e0b;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.ifood-header h1 {
+  margin: 0 0 6px;
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.ifood-subtitle {
+  margin: 0;
+  color: #9ca3af;
+  font-size: 14px;
+  max-width: 640px;
+}
+
+.ifood-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ifood-readiness-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.ifood-pill {
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #d1d5db;
+}
+
+.ifood-pill.is-ready {
+  background: rgba(16, 185, 129, 0.14);
+  border-color: rgba(16, 185, 129, 0.45);
+  color: #6ee7b7;
+}
+
+.ifood-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  padding-bottom: 10px;
+}
+
+.ifood-tab {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #d1d5db;
+  padding: 8px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ifood-tab.is-active {
+  background: #17805c;
+  border-color: #17805c;
+  color: #ffffff;
+}
+
+.ifood-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ifood-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.ifood-card h2,
+.ifood-card h3 {
+  margin-top: 0;
+  margin-bottom: 6px;
+}
+
+.ifood-card-top {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.ifood-meta,
+.ifood-muted {
+  color: #9ca3af;
+  font-size: 13px;
+}
+
+.ifood-diff-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin: 10px 0;
+}
+
+.ifood-pre {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 10px;
+  overflow-x: auto;
+  font-size: 12px;
+  max-height: 280px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ifood-textarea {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.35);
+  color: #f3f4f6;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  padding: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+.ifood-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.ifood-btn-primary,
+.ifood-btn-secondary,
+.ifood-btn-danger {
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.ifood-btn-primary {
+  background: #17805c;
+  color: #ffffff;
+}
+
+.ifood-btn-secondary {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #f3f4f6;
+}
+
+.ifood-btn-danger {
+  background: #b91c1c;
+  color: #ffffff;
+}
+
+.ifood-badge {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ifood-badge.is-ok {
+  background: rgba(16, 185, 129, 0.18);
+  color: #6ee7b7;
+}
+
+.ifood-badge.is-warn {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fcd34d;
+}
+
+.ifood-badge.is-danger {
+  background: rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+}
+
+.ifood-badge.is-neutral {
+  background: rgba(255, 255, 255, 0.1);
+  color: #d1d5db;
+}
+
+.ifood-banner {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.ifood-banner.is-error {
+  background: rgba(239, 68, 68, 0.16);
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  color: #fecaca;
+}
+
+.ifood-banner.is-success {
+  background: rgba(16, 185, 129, 0.16);
+  border: 1px solid rgba(16, 185, 129, 0.45);
+  color: #a7f3d0;
+}
+
+.ifood-banner.is-info {
+  background: rgba(59, 130, 246, 0.16);
+  border: 1px solid rgba(59, 130, 246, 0.45);
+  color: #bfdbfe;
+}
+
+.ifood-guardrail-box {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+
+.ifood-schema-list {
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.ifood-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.ifood-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.ifood-table th,
+.ifood-table td {
+  text-align: left;
+  padding: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.ifood-label {
+  display: block;
+  margin-top: 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Operational dashboard layout */
+.ifood-sync-root {
+  --ifood-line: rgba(183, 198, 218, .16);
+  --ifood-surface: #171f2d;
+  --ifood-surface-raised: #1c2738;
+  max-width: 1240px;
+  padding: clamp(18px, 3vw, 36px);
+  color: #edf2f8;
+}
+.ifood-header { align-items: center; gap: 24px; margin-bottom: 26px; }
+.ifood-header h1 { font-size: clamp(27px, 3.1vw, 38px); letter-spacing: -.035em; margin-bottom: 10px; }
+.ifood-subtitle { line-height: 1.55; max-width: 690px; color: #aebbd0; }
+.ifood-eyebrow { color: #58d6a0; letter-spacing: .14em; font-size: 10px; margin-bottom: 9px; }
+.ifood-header-actions { align-items: center; }
+.ifood-summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; margin-bottom: 20px; }
+.ifood-summary-card { display: flex; flex-direction: column; gap: 5px; padding: 19px 21px; background: linear-gradient(145deg,#1d293b,#172131); border: 1px solid var(--ifood-line); border-radius: 15px; min-width: 0; }
+.ifood-summary-card span { font-size: 12px; font-weight: 700; color: #c3cfdf; }
+.ifood-summary-card strong { font-size: 34px; font-weight: 750; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.ifood-summary-card small { color: #91a2b8; font-size: 11px; }
+.ifood-integrations { padding: 18px 20px 11px; background: var(--ifood-surface); border: 1px solid var(--ifood-line); border-radius: 15px; margin-bottom: 22px; }
+.ifood-section-heading { display:flex; justify-content:space-between; gap:10px; align-items:baseline; margin-bottom:14px; }
+.ifood-section-heading span { font-size: 14px; font-weight: 750; }
+.ifood-section-heading small { color:#8fa0b6; font-size:11px; }
+.ifood-readiness-bar { margin:0; gap:7px; }
+.ifood-pill { border-radius: 7px; padding: 7px 10px; line-height: 1.4; background: #202c3d; border-color: var(--ifood-line); }
+.ifood-tabs { gap: 4px; margin-bottom: 19px; padding: 5px; background:#172131; border: 1px solid var(--ifood-line); border-radius: 11px; width: fit-content; max-width: 100%; }
+.ifood-tab { border:0; border-radius:7px; padding:10px 15px; white-space:nowrap; }
+.ifood-tab:hover, .ifood-btn-secondary:hover { background:#29374a; color:#fff; }
+.ifood-tab.is-active { background:#1b6e55; box-shadow:0 2px 9px #0002; }
+.ifood-content-heading { display:flex; align-items:end; justify-content:space-between; gap:12px; margin:0 0 14px; }
+.ifood-content-heading h2 { margin:0; font-size:20px; letter-spacing:-.02em; }
+.ifood-content-heading .ifood-eyebrow { display:block; margin-bottom:4px; }
+.ifood-card { background:var(--ifood-surface); border-color:var(--ifood-line); border-radius:14px; padding:20px; box-shadow:0 7px 25px #00000012; }
+.ifood-card label { display:block; margin-bottom:8px; color:#c3cfdf; font-size:12px; font-weight:700; }
+.ifood-card select { min-height:40px; min-width:220px; max-width:100%; padding:8px 12px; border:1px solid #4b6470; border-radius:9px; background:#101c23; color:#edf7f1; color-scheme:dark; font:inherit; }
+.ifood-card select option { background:#17232c; color:#edf7f1; }
+.ifood-card select:focus-visible { outline:2px solid #66d9a6; outline-offset:2px; }
+.ifood-card h3 { font-size:16px; letter-spacing:-.01em; }
+.ifood-card-top { margin-bottom:16px; }
+.ifood-meta { display:block; line-height:1.65; margin-top:6px; }
+.ifood-diff-grid { gap:12px; }
+.ifood-diff-grid > div { min-width:0; }
+.ifood-diff-grid h4 { color:#adbed1; font-size:12px; margin:0 0 8px; }
+.ifood-pre { background:#101824; border-color:var(--ifood-line); border-radius:10px; padding:13px; line-height:1.55; }
+.ifood-btn-primary,.ifood-btn-secondary,.ifood-btn-danger { min-height:38px; transition:background .15s ease, transform .15s ease; }
+.ifood-btn-primary:hover { background:#126c4e; }
+.ifood-btn-danger:hover { background:#991b1b; }
+.ifood-btn-primary:disabled,.ifood-btn-secondary:disabled,.ifood-btn-danger:disabled { opacity:.55; cursor:not-allowed; }
+.ifood-btn-primary:focus-visible,.ifood-btn-secondary:focus-visible,.ifood-btn-danger:focus-visible,.ifood-tab:focus-visible { outline:2px solid #fff; outline-offset:2px; }
+.ifood-badge { padding:6px 10px; letter-spacing:.03em; }
+.ifood-table th { color:#b7c7d9; background:#202c3d; font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+.ifood-table td { line-height:1.5; }
+@media (max-width: 700px) {
+  .ifood-header-actions,.ifood-header-actions button { width:100%; }
+  .ifood-summary-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .ifood-summary-card:last-child { grid-column:1 / -1; }
+  .ifood-tabs { width:100%; overflow-x:auto; flex-wrap:nowrap; }
+  .ifood-tab { flex:0 0 auto; }
+  .ifood-content-heading { align-items:start; }
+  .ifood-card { padding:16px; }
+}
+@media (max-width: 420px) {
+  .ifood-summary-card { padding:15px; }
+  .ifood-summary-card strong { font-size:28px; }
+  .ifood-section-heading { display:block; }
+  .ifood-section-heading small { display:block; margin-top:3px; }
+  .ifood-content-heading > .ifood-muted { display:none; }
+}

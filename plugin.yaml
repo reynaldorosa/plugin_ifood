@@ -1,0 +1,17 @@
+name: ifood-loja
+version: 0.2.0
+description: Sincronização Google Sheets (Source of Truth) → iFood API / Playwright Fallback
+enabled: false
+entry: __init__.py
+dashboard:
+  manifest: dashboard/manifest.json
+  api: dashboard/plugin_api.py
+provides_tools:
+  - ifood_sync_status
+  - ifood_sync_from_sheet
+  - ifood_list_proposals
+  - ifood_confirm_proposal
+  - ifood_reject_proposal
+permissions:
+  default_access: deny
+  operator_only: true

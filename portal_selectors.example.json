@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "channels": {
+    "IFOOD": {
+      "channel": "IFOOD",
+      "validated_real_portal": false,
+      "notes": "Preencher após inspeção e homologação da conta piloto.",
+      "merchant_id_selector": "",
+      "merchant_id_attr": "",
+      "catalog_item_row_template": "",
+      "catalog_price_input": "",
+      "catalog_available_input": "",
+      "catalog_item_save_button": ""
+    },
+    "99FOOD": {
+      "channel": "99FOOD",
+      "validated_real_portal": false,
+      "notes": "Preencher após inspeção e homologação da conta piloto.",
+      "merchant_id_selector": "",
+      "merchant_id_attr": "",
+      "catalog_item_row_template": "",
+      "catalog_price_input": "",
+      "catalog_available_input": "",
+      "catalog_item_save_button": ""
+    }
+  }
+}
